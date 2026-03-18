@@ -1,0 +1,156 @@
+name: FitScan CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'fitscan/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - '.github/workflows/fitscan-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'fitscan/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+
+  quality:
+    name: Lint & typecheck
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install black ruff mypy
+      - run: black --check fitscan/ tests/
+      - run: ruff check fitscan/ tests/
+      - run: mypy fitscan/ --ignore-missing-imports
+
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-22.04
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e ".[dev]"
+
+      - name: Write .env.test
+        run: |
+          cat > .env.test <<'EOF'
+          APP_ENV=test
+          DATABASE_URL=sqlite:///./fitscan_test.db
+          TEST_DATABASE_URL=sqlite:///./fitscan_test.db
+          ANTHROPIC_API_KEY=test_placeholder
+          STORAGE_BACKEND=local
+          ENABLE_CLAUDE_VALIDATION=false
+          ENABLE_SMPL_FITTING=false
+          ENABLE_AVATAR_GENERATION=false
+          CONFIDENCE_THRESHOLD=0.65
+          LOG_LEVEL=WARNING
+          EOF
+          # Strip leading whitespace from each line
+          sed -i 's/^[[:space:]]*//' .env.test
+
+      - run: pytest tests/unit/ -v --tb=short --cov=fitscan --cov-report=xml
+
+      - uses: codecov/codecov-action@v4
+        with:
+          file: coverage.xml
+          flags: fitscan-unit
+          fail_ci_if_error: false
+
+  integration-tests:
+    name: Integration tests
+    runs-on: ubuntu-22.04
+    needs: unit-tests
+
+    services:
+      postgres:
+        image: ankane/pgvector:latest
+        env:
+          POSTGRES_USER: fitscan
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: fitscan_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e ".[dev]" psycopg2-binary pgvector alembic
+
+      - name: Write .env.test
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          cat > .env.test <<EOF
+          APP_ENV=test
+          DATABASE_URL=postgresql://fitscan:password@localhost:5432/fitscan_test
+          TEST_DATABASE_URL=postgresql://fitscan:password@localhost:5432/fitscan_test
+          ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-test_placeholder}
+          STORAGE_BACKEND=local
+          ENABLE_CLAUDE_VALIDATION=false
+          ENABLE_SMPL_FITTING=false
+          ENABLE_AVATAR_GENERATION=false
+          LOG_LEVEL=WARNING
+          EOF
+          sed -i 's/^[[:space:]]*//' .env.test
+
+      - run: alembic upgrade head
+      - run: pytest tests/integration/ -v --tb=short
+
+  deploy:
+    name: Deploy FitScan to server
+    runs-on: ubuntu-22.04
+    needs: [unit-tests, integration-tests]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd /home/fitscan/app
+
+            git fetch origin main
+            git reset --hard origin/main
+
+            venv/bin/pip install -e . --quiet
+            venv/bin/alembic upgrade head
+            sudo systemctl restart fitscan
+
+            sleep 3
+            curl -sf http://localhost:8000/api/v1/health || exit 1
+            echo "FitScan deployed successfully."
