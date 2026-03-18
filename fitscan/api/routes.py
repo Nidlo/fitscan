@@ -162,3 +162,116 @@ async def register_api_key(
         "monthly_limit": monthly_limit,
         "note": "Store this key securely. It will not be shown again.",
     }
+
+
+@router.post(
+    "/measure/measurements",
+    response_model=MeasurementsResponse,
+    tags=["Measure"],
+    summary="Measurements only — no avatar generated",
+    description="Faster than /measure. Returns only the 24-field measurement JSON. No GLB is generated.",
+)
+async def measure_measurements_only(
+    image: UploadFile = File(...),
+    height_cm: float | None = Form(None),
+    reference_object_cm: float | None = Form(None),
+    gender_profile: str = Form("ladies"),
+    enable_smpl: bool = Form(True),
+    enable_claude: bool = Form(True),
+    service=Depends(get_measurement_service),
+):
+    """Measurements only — skips avatar generation entirely."""
+    if not height_cm and not reference_object_cm:
+        raise HTTPException(400, "Provide height_cm or reference_object_cm.")
+    import tempfile
+    content = await image.read()
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+    try:
+        result = service.measure(
+            image_path=tmp_path,
+            height_cm=height_cm,
+            reference_object_cm=reference_object_cm,
+        )
+        response = MeasurementsResponse(status="success", **result)
+        response.avatar_id = None  # explicitly None — no avatar generated
+        return response
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+@router.post(
+    "/measure/avatar",
+    tags=["Measure"],
+    summary="Avatar only — returns GLB binary directly",
+    description="Returns the raw GLB binary. Response Content-Type is model/gltf-binary. No measurements JSON.",
+)
+async def measure_avatar_only(
+    image: UploadFile = File(...),
+    height_cm: float | None = Form(None),
+    reference_object_cm: float | None = Form(None),
+    gender_profile: str = Form("ladies"),
+    service=Depends(get_measurement_service),
+):
+    """Avatar only — returns GLB file directly as binary response."""
+    from fastapi.responses import Response
+    import tempfile
+    import numpy as np
+    import cv2
+
+    if not height_cm and not reference_object_cm:
+        raise HTTPException(400, "Provide height_cm or reference_object_cm.")
+
+    content = await image.read()
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+
+    try:
+        result, mesh, betas, thetas = service.measure_with_mesh(
+            image_path=tmp_path,
+            height_cm=height_cm,
+            reference_object_cm=reference_object_cm,
+            gender_profile=gender_profile,
+        )
+        if mesh is None:
+            raise HTTPException(500, "3D mesh generation failed.")
+
+        from fitscan.avatar.generator import AvatarGenerator
+        import uuid
+        source_img = cv2.cvtColor(
+            cv2.imdecode(np.frombuffer(content, np.uint8), cv2.IMREAD_COLOR),
+            cv2.COLOR_BGR2RGB
+        )
+        gen = AvatarGenerator()
+        import tempfile as tf
+        with tf.TemporaryDirectory() as tmpdir:
+            avatar = gen.generate(
+                mesh=mesh,
+                source_image=source_img,
+                measurements=result,
+                betas=betas or [],
+                thetas=thetas or [],
+                gender_profile=gender_profile,
+                output_dir=Path(tmpdir),
+            )
+            glb_bytes = Path(avatar.glb_path).read_bytes()
+            height_val = result.height_cm.value_cm if result.height_cm else 0
+
+        return Response(
+            content=glb_bytes,
+            media_type="model/gltf-binary",
+            headers={
+                "X-Avatar-Id": str(uuid.uuid4()),
+                "X-Height-Cm": str(height_val),
+                "Content-Disposition": "attachment; filename=avatar.glb",
+            }
+        )
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    finally:
+        tmp_path.unlink(missing_ok=True)
+

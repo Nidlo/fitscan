@@ -1,0 +1,285 @@
+{
+  "info": {
+    "name": "FitScan API",
+    "description": "AI-powered body measurement API.\n\nHow to use:\n1. Run `POST Keys / Register API Key` first\n2. Copy the `api_key` from the response\n3. Set it as the `api_key` collection variable (Edit Collection → Variables)\n4. All other requests will use it automatically via the `X-API-Key` header\n\nBase URL is set as a variable — change `base_url` to switch between local and production.",
+    "version": "0.1.0",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000", "type": "string" },
+    { "key": "api_key", "value": "fsk_replace_with_your_key", "type": "string" },
+    { "key": "avatar_id", "value": "", "type": "string", "description": "Auto-filled after a measure request" }
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "X-API-Key", "type": "string" },
+      { "key": "value", "value": "{{api_key}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/health", "host": ["{{base_url}}"], "path": ["api", "v1", "health"] },
+            "description": "Check if the API is running. No auth required."
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Status ok', () => pm.expect(pm.response.json().status).to.equal('ok'));"
+            ]}
+          }]
+        }
+      ]
+    },
+    {
+      "name": "Keys",
+      "item": [
+        {
+          "name": "Register API Key",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/api/v1/keys/register", "host": ["{{base_url}}"], "path": ["api", "v1", "keys", "register"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "owner_name", "value": "Your Name", "type": "text" },
+                { "key": "owner_email", "value": "you@example.com", "type": "text" },
+                { "key": "tier", "value": "free", "type": "text", "description": "free or pro" }
+              ]
+            },
+            "description": "Register for a FitScan API key. Copy the returned `api_key` value and paste it into the `api_key` collection variable."
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "const json = pm.response.json();",
+              "if (json.api_key) {",
+              "  pm.collectionVariables.set('api_key', json.api_key);",
+              "  console.log('API key saved:', json.api_key);",
+              "}",
+              "pm.test('Key starts with fsk_', () => pm.expect(json.api_key).to.match(/^fsk_/));"
+            ]}
+          }]
+        },
+        {
+          "name": "Check Usage",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/keys/usage", "host": ["{{base_url}}"], "path": ["api", "v1", "keys", "usage"] },
+            "description": "Check how many measurements you have used this month."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Measure",
+      "item": [
+        {
+          "name": "Measure + Avatar (both)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/api/v1/measure", "host": ["{{base_url}}"], "path": ["api", "v1", "measure"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "image", "type": "file", "src": "/path/to/your/photo.jpg", "description": "Person photo — full body, min 720p" },
+                { "key": "height_cm", "value": "165", "type": "text", "description": "Person's height in cm" },
+                { "key": "gender_profile", "value": "ladies", "type": "text", "description": "ladies | men | children" },
+                { "key": "enable_smpl", "value": "true", "type": "text", "description": "true for accuracy, false for speed" },
+                { "key": "enable_claude", "value": "true", "type": "text" },
+                { "key": "generate_avatar", "value": "true", "type": "text" }
+              ]
+            },
+            "description": "Submit a photo and receive all 24 body measurements + a 3D avatar GLB.\n\nThe `avatar_id` in the response is saved to the `avatar_id` collection variable for use in subsequent requests."
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "const json = pm.response.json();",
+              "pm.test('Status success', () => pm.expect(json.status).to.equal('success'));",
+              "pm.test('Has waist_cm', () => pm.expect(json.waist_cm).to.have.property('value_cm'));",
+              "pm.test('Confidence > 0.5', () => pm.expect(json.waist_cm.confidence).to.be.above(0.5));",
+              "if (json.avatar_id) {",
+              "  pm.collectionVariables.set('avatar_id', json.avatar_id);",
+              "  console.log('avatar_id saved:', json.avatar_id);",
+              "}"
+            ]}
+          }]
+        },
+        {
+          "name": "Measurements Only (no avatar)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/api/v1/measure/measurements", "host": ["{{base_url}}"], "path": ["api", "v1", "measure", "measurements"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "image", "type": "file", "src": "/path/to/your/photo.jpg" },
+                { "key": "height_cm", "value": "175", "type": "text" },
+                { "key": "gender_profile", "value": "men", "type": "text" },
+                { "key": "enable_smpl", "value": "false", "type": "text", "description": "false = faster response" }
+              ]
+            },
+            "description": "Returns only measurement numbers. No GLB generated. Faster than /measure.\n\nUse this when you only need the numbers — e.g. for size chart matching."
+          }
+        },
+        {
+          "name": "Avatar Only (no measurements JSON)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/api/v1/measure/avatar", "host": ["{{base_url}}"], "path": ["api", "v1", "measure", "avatar"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "image", "type": "file", "src": "/path/to/your/photo.jpg" },
+                { "key": "height_cm", "value": "165", "type": "text" },
+                { "key": "gender_profile", "value": "ladies", "type": "text" }
+              ]
+            },
+            "description": "Returns only the GLB binary. Response body is the raw GLB file.\n\nSave the response body as `.glb` and open in the avatar_viewer.html or any Three.js scene."
+          }
+        },
+        {
+          "name": "Measure (async — for production)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/api/v1/measure", "host": ["{{base_url}}"], "path": ["api", "v1", "measure"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "image", "type": "file", "src": "/path/to/your/photo.jpg" },
+                { "key": "height_cm", "value": "165", "type": "text" },
+                { "key": "generate_async", "value": "true", "type": "text", "description": "Returns task_id immediately, don't wait for processing" }
+              ]
+            },
+            "description": "For production use. Returns a `task_id` immediately. Poll `GET /jobs/{task_id}` until status is `complete`."
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "const json = pm.response.json();",
+              "if (json.task_id) pm.collectionVariables.set('task_id', json.task_id);"
+            ]}
+          }]
+        }
+      ]
+    },
+    {
+      "name": "Avatar",
+      "item": [
+        {
+          "name": "Download GLB",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/avatar/{{avatar_id}}/glb", "host": ["{{base_url}}"], "path": ["api", "v1", "avatar", "{{avatar_id}}", "glb"] },
+            "description": "Download the 3D avatar GLB binary.\n\nIn Postman: Send, then click 'Save Response > Save to file' and name it `avatar.glb`. Open in avatar_viewer.html.\n\nIn code: Use the binary response directly as a Blob URL in Three.js."
+          }
+        },
+        {
+          "name": "Download Thumbnail",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/avatar/{{avatar_id}}/thumbnail", "host": ["{{base_url}}"], "path": ["api", "v1", "avatar", "{{avatar_id}}", "thumbnail"] },
+            "description": "512×512 PNG preview. Save response as thumbnail.png."
+          }
+        },
+        {
+          "name": "Override Measurements",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/api/v1/avatar/{{avatar_id}}/override", "host": ["{{base_url}}"], "path": ["api", "v1", "avatar", "{{avatar_id}}", "override"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"overrides\": {\n    \"wrist_cm\": 10.0,\n    \"waist_cm\": 72.0\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Correct measurements and recalculate.\n\nThe tailor measured wrist as 10cm but FitScan said 15cm. Submit the correction here. FitScan will update the entire body shape and recalculate all 24 measurements to be consistent with the correction.\n\nOnly include the fields you are correcting. All others are recalculated."
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const json = pm.response.json();",
+              "pm.test('Wrist corrected', () => pm.expect(json.recalculated_measurements.wrist_cm.value_cm).to.be.closeTo(10.0, 0.5));",
+              "pm.test('Has updated_betas', () => pm.expect(json.updated_betas).to.have.length(10));"
+            ]}
+          }]
+        },
+        {
+          "name": "Fit Garment (blouse)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/api/v1/avatar/{{avatar_id}}/fit-garment", "host": ["{{base_url}}"], "path": ["api", "v1", "avatar", "{{avatar_id}}", "fit-garment"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "garment_type", "value": "blouse", "type": "text", "description": "blouse | dress | kaba | skirt | trousers | t-shirt" },
+                { "key": "fabric_texture", "type": "file", "src": "", "disabled": true, "description": "Optional: fabric photo to apply as texture" }
+              ]
+            },
+            "description": "Drapes a virtual blouse on the avatar. Returns a GLB of body + clothing.\n\nSave response as draped.glb and load in the 3D viewer."
+          }
+        },
+        {
+          "name": "Fit Garment (kaba)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/api/v1/avatar/{{avatar_id}}/fit-garment", "host": ["{{base_url}}"], "path": ["api", "v1", "avatar", "{{avatar_id}}", "fit-garment"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "garment_type", "value": "kaba", "type": "text" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Fit Garment (dress)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/api/v1/avatar/{{avatar_id}}/fit-garment", "host": ["{{base_url}}"], "path": ["api", "v1", "avatar", "{{avatar_id}}", "fit-garment"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "garment_type", "value": "dress", "type": "text" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Jobs",
+      "item": [
+        {
+          "name": "Poll Job Status",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/jobs/{{task_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "jobs", "{{task_id}}"] },
+            "description": "Poll for async job result. Keep calling until status is `complete` or `failed`.\n\nRecommended polling interval: every 3 seconds."
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "const json = pm.response.json();",
+              "pm.test('Has status', () => pm.expect(json).to.have.property('status'));",
+              "if (json.status === 'complete' && json.result?.avatar_id) {",
+              "  pm.collectionVariables.set('avatar_id', json.result.avatar_id);",
+              "}"
+            ]}
+          }]
+        }
+      ]
+    }
+  ]
+}

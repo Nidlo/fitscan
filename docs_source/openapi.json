@@ -1,0 +1,690 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FitScan API",
+    "version": "0.1.0",
+    "description": "AI-powered body measurement API for the fashion industry.\n\nFitScan takes a photograph of a person and returns precise body measurements in centimetres, a 3D avatar (GLB file), or both — depending on the endpoint you call.\n\n## Authentication\nAll endpoints (except `/health` and `/keys/register`) require an API key in the request header:\n```\nX-API-Key: fsk_your_key_here\n```\n\n## Endpoints at a glance\n| Endpoint | Returns |\n|---|---|\n| `POST /measure` | Measurements + avatar |\n| `POST /measure/measurements` | Measurements only |\n| `POST /measure/avatar` | Avatar GLB only |\n| `POST /avatar/{id}/override` | Corrected measurements + new avatar |\n| `POST /avatar/{id}/fit-garment` | Avatar wearing a garment |\n| `GET /avatar/{id}/glb` | Download GLB binary |\n| `GET /avatar/{id}/thumbnail` | Download PNG preview |\n\n## Base URLs\n| Environment | URL |\n|---|---|\n| Local development | `http://localhost:8000` |\n| Production | `https://api.yourdomain.com` |\n\n## Measurement profiles\n- `ladies` — 24 fields including bust, kaba length, nape-to-waist, slit length\n- `men` — common fields + chest (no bust, kaba, slit, cape)\n- `children` — common fields with child-range bounds",
+    "contact": {
+      "name": "FitScan Support",
+      "url": "https://yourdomain.com",
+      "email": "support@yourdomain.com"
+    },
+    "license": {
+      "name": "MIT",
+      "url": "https://opensource.org/licenses/MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8000",
+      "description": "Local development"
+    },
+    {
+      "url": "https://api.yourdomain.com",
+      "description": "Production"
+    }
+  ],
+  "tags": [
+    { "name": "Health", "description": "Service status" },
+    { "name": "Keys", "description": "API key management" },
+    { "name": "Measure", "description": "Body measurement from photos" },
+    { "name": "Avatar", "description": "3D avatar retrieval and manipulation" },
+    { "name": "Jobs", "description": "Async job status polling" }
+  ],
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Health check",
+        "description": "Returns service status and version. No authentication required.",
+        "operationId": "healthCheck",
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" },
+                "example": { "status": "ok", "version": "0.1.0" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/keys/register": {
+      "post": {
+        "tags": ["Keys"],
+        "summary": "Register for an API key",
+        "description": "Register for a FitScan API key. The key is returned once and cannot be retrieved again — store it securely.\n\n**Free tier:** 50 measurements per month\n**Pro tier:** 1,000 measurements per month",
+        "operationId": "registerApiKey",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": { "$ref": "#/components/schemas/RegisterKeyRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "API key created successfully",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RegisterKeyResponse" },
+                "example": {
+                  "api_key": "fsk_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6",
+                  "tier": "free",
+                  "monthly_limit": 50,
+                  "note": "Store this key securely. It will not be shown again."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/keys/usage": {
+      "get": {
+        "tags": ["Keys"],
+        "summary": "Check usage this month",
+        "operationId": "getKeyUsage",
+        "security": [{ "ApiKeyAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Usage statistics",
+            "content": {
+              "application/json": {
+                "example": {
+                  "tier": "free",
+                  "used_this_month": 12,
+                  "monthly_limit": 50,
+                  "remaining": 38
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/measure": {
+      "post": {
+        "tags": ["Measure"],
+        "summary": "Measure + avatar (both)",
+        "description": "Submit a photo and receive both the full body measurements and a 3D avatar GLB file.\n\n**Processing time:** 20–40 seconds with SMPL enabled, 3–8 seconds without.\n\nFor long-running jobs, use `generate_async=true` which returns a `task_id` immediately — poll `/jobs/{task_id}` for the result.",
+        "operationId": "measureBoth",
+        "security": [{ "ApiKeyAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": { "$ref": "#/components/schemas/MeasureRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Measurements and avatar returned successfully",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MeasureResponse" },
+                "example": {
+                  "status": "success",
+                  "avatar_id": "3f8a2b1c-4d5e-6f7a-8b9c-0d1e2f3a4b5c",
+                  "gender_profile": "ladies",
+                  "source": "fused",
+                  "bust_cm": { "value_cm": 92.4, "confidence": 0.88, "source": "smpl" },
+                  "waist_cm": { "value_cm": 71.2, "confidence": 0.85, "source": "smpl" },
+                  "hip_cm": { "value_cm": 97.8, "confidence": 0.87, "source": "smpl" },
+                  "shoulder_cm": { "value_cm": 38.1, "confidence": 0.84, "source": "smpl" },
+                  "across_back_cm": { "value_cm": 34.2, "confidence": 0.80, "source": "smpl" },
+                  "across_chest_cm": { "value_cm": 32.8, "confidence": 0.78, "source": "silhouette" },
+                  "shoulder_to_nipple_cm": { "value_cm": 24.1, "confidence": 0.79, "source": "smpl" },
+                  "nipple_to_nipple_cm": { "value_cm": 17.3, "confidence": 0.75, "source": "smpl" },
+                  "shoulder_to_underbust_cm": { "value_cm": 28.5, "confidence": 0.81, "source": "smpl" },
+                  "shoulder_to_waist_cm": { "value_cm": 38.9, "confidence": 0.86, "source": "smpl" },
+                  "shoulder_to_hip_cm": { "value_cm": 56.4, "confidence": 0.85, "source": "smpl" },
+                  "nape_to_waist_cm": { "value_cm": 40.2, "confidence": 0.78, "source": "smpl" },
+                  "under_breast_waist_cm": { "value_cm": 78.1, "confidence": 0.80, "source": "smpl" },
+                  "height_cm": { "value_cm": 165.0, "confidence": 0.92, "source": "smpl" },
+                  "inseam_cm": { "value_cm": 74.3, "confidence": 0.82, "source": "smpl" },
+                  "sleeve_length_cm": { "value_cm": 58.7, "confidence": 0.80, "source": "smpl" },
+                  "neck_cm": { "value_cm": 33.4, "confidence": 0.87, "source": "smpl" },
+                  "thigh_cm": { "value_cm": 54.2, "confidence": 0.82, "source": "smpl" },
+                  "wrist_cm": { "value_cm": 15.1, "confidence": 0.80, "source": "smpl" },
+                  "around_arm_cm": { "value_cm": 28.3, "confidence": 0.80, "source": "smpl" },
+                  "hip_depth_cm": { "value_cm": 19.4, "confidence": 0.86, "source": "smpl" },
+                  "blouse_length_cm": { "value_cm": 56.4, "confidence": 0.85, "source": "smpl" },
+                  "kaba_length_cm": { "value_cm": 86.4, "confidence": 0.75, "source": "smpl" },
+                  "skirt_length_cm": { "value_cm": 90.7, "confidence": 0.78, "source": "smpl" },
+                  "dress_length_cm": { "value_cm": 156.8, "confidence": 0.72, "source": "smpl" },
+                  "slit_length_cm": { "value_cm": 40.0, "confidence": 0.40, "source": "default" },
+                  "cape_cm": { "value_cm": 60.0, "confidence": 0.40, "source": "default" }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/measure/measurements": {
+      "post": {
+        "tags": ["Measure"],
+        "summary": "Measurements only (no avatar)",
+        "description": "Submit a photo and receive only the body measurements JSON. Faster than `/measure` because no GLB is generated.\n\n**Use this when:** you only need measurement numbers, not a 3D model.",
+        "operationId": "measureOnly",
+        "security": [{ "ApiKeyAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": { "$ref": "#/components/schemas/MeasureRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Measurements returned. No avatar_id in response.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MeasureResponse" },
+                "example": {
+                  "status": "success",
+                  "avatar_id": null,
+                  "gender_profile": "ladies",
+                  "source": "fused",
+                  "waist_cm": { "value_cm": 71.2, "confidence": 0.85, "source": "smpl" },
+                  "hip_cm": { "value_cm": 97.8, "confidence": 0.87, "source": "smpl" }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    },
+    "/api/v1/measure/avatar": {
+      "post": {
+        "tags": ["Measure"],
+        "summary": "Avatar only (no measurements JSON)",
+        "description": "Submit a photo and receive only the 3D GLB avatar binary. The response body is the raw GLB file.\n\n**Use this when:** you only need the 3D model for display, not measurement numbers.\n\nContent-Type of response: `model/gltf-binary`",
+        "operationId": "avatarOnly",
+        "security": [{ "ApiKeyAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": { "$ref": "#/components/schemas/MeasureRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "GLB binary file returned directly",
+            "headers": {
+              "X-Avatar-Id": {
+                "description": "The UUID of the generated avatar",
+                "schema": { "type": "string" }
+              },
+              "X-Height-Cm": {
+                "description": "Detected height in cm",
+                "schema": { "type": "number" }
+              }
+            },
+            "content": {
+              "model/gltf-binary": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/avatar/{avatar_id}/glb": {
+      "get": {
+        "tags": ["Avatar"],
+        "summary": "Download avatar GLB",
+        "description": "Download the 3D avatar GLB binary. Load directly into Three.js, React Three Fiber, Babylon.js, Unity, or Blender.",
+        "operationId": "getAvatarGlb",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/AvatarId" }],
+        "responses": {
+          "200": {
+            "description": "GLB binary",
+            "content": {
+              "model/gltf-binary": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/avatar/{avatar_id}/thumbnail": {
+      "get": {
+        "tags": ["Avatar"],
+        "summary": "Download avatar thumbnail",
+        "description": "Returns a 512×512 PNG preview of the avatar front view. Suitable for profile cards and lists.",
+        "operationId": "getAvatarThumbnail",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/AvatarId" }],
+        "responses": {
+          "200": {
+            "description": "PNG image",
+            "content": { "image/png": { "schema": { "type": "string", "format": "binary" } } }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/avatar/{avatar_id}/override": {
+      "post": {
+        "tags": ["Avatar"],
+        "summary": "Override measurements and recalculate",
+        "description": "Submit manual measurement corrections. FitScan runs **Inverse SMPL** optimisation — adjusting the body shape parameters to match your corrections, then recalculates all 24 measurements from the updated body shape.\n\nThis is how a tailor corrects AI measurements: if the AI says wrist is 15cm but the tape measure says 10cm, submit `{\"wrist_cm\": 10.0}` and all related measurements are updated consistently.\n\n**Processing time:** 15–30 seconds.",
+        "operationId": "overrideMeasurements",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/AvatarId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/OverrideRequest" },
+              "example": {
+                "overrides": {
+                  "wrist_cm": 10.0,
+                  "waist_cm": 72.0
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recalculated measurements returned",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OverrideResponse" },
+                "example": {
+                  "avatar_id": "3f8a2b1c-4d5e-6f7a-8b9c-0d1e2f3a4b5c",
+                  "recalculated_measurements": {
+                    "waist_cm": { "value_cm": 72.0, "confidence": 0.95, "source": "override" },
+                    "wrist_cm": { "value_cm": 10.0, "confidence": 0.95, "source": "override" },
+                    "around_arm_cm": { "value_cm": 26.1, "confidence": 0.82, "source": "smpl" }
+                  },
+                  "updated_betas": [0.12, -0.34, 0.08, 0.22, -0.15, 0.07, 0.31, -0.09, 0.18, -0.24],
+                  "convergence_note": "Converged at iteration 87. All measurements recalculated."
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/avatar/{avatar_id}/fit-garment": {
+      "post": {
+        "tags": ["Avatar"],
+        "summary": "Drape virtual clothing on avatar",
+        "description": "Drapes a virtual garment on the avatar using TailorNet physics simulation. Returns a combined GLB of body + clothing.\n\nSupported garment types: `blouse`, `dress`, `kaba`, `skirt`, `trousers`, `t-shirt`",
+        "operationId": "fitGarment",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/AvatarId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["garment_type"],
+                "properties": {
+                  "garment_type": {
+                    "type": "string",
+                    "enum": ["blouse", "dress", "kaba", "skirt", "trousers", "t-shirt"],
+                    "description": "Type of garment to drape"
+                  },
+                  "fabric_texture": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Optional fabric photo to apply as texture on the garment"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Draped GLB binary returned",
+            "headers": {
+              "X-Fit-Quality": {
+                "description": "Garment fit quality score 0.0–1.0",
+                "schema": { "type": "number" }
+              }
+            },
+            "content": {
+              "model/gltf-binary": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/jobs/{task_id}": {
+      "get": {
+        "tags": ["Jobs"],
+        "summary": "Poll async job status",
+        "description": "Poll for the status of an async measurement job. Use this when you submitted a measure request with `generate_async=true`.",
+        "operationId": "getJobStatus",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobStatusResponse" },
+                "examples": {
+                  "processing": {
+                    "value": { "status": "processing", "task_id": "abc123" }
+                  },
+                  "complete": {
+                    "value": {
+                      "status": "complete",
+                      "task_id": "abc123",
+                      "result": { "avatar_id": "3f8a2b1c-...", "waist_cm": { "value_cm": 71.2, "confidence": 0.85, "source": "smpl" } }
+                    }
+                  },
+                  "failed": {
+                    "value": { "status": "failed", "task_id": "abc123", "error": "PoseDetectionError: No human pose detected" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "API key starting with `fsk_`. Get one from `POST /api/v1/keys/register`."
+      }
+    },
+    "parameters": {
+      "AvatarId": {
+        "name": "avatar_id",
+        "in": "path",
+        "required": true,
+        "description": "UUID of the avatar returned from a measure endpoint",
+        "schema": { "type": "string", "format": "uuid" }
+      }
+    },
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "ok" },
+          "version": { "type": "string", "example": "0.1.0" }
+        }
+      },
+      "RegisterKeyRequest": {
+        "type": "object",
+        "required": ["owner_name", "owner_email"],
+        "properties": {
+          "owner_name": { "type": "string", "example": "Kwame Mensah" },
+          "owner_email": { "type": "string", "format": "email", "example": "kwame@example.com" },
+          "tier": {
+            "type": "string",
+            "enum": ["free", "pro"],
+            "default": "free",
+            "description": "free = 50/month, pro = 1000/month"
+          }
+        }
+      },
+      "RegisterKeyResponse": {
+        "type": "object",
+        "properties": {
+          "api_key": { "type": "string", "example": "fsk_a1b2c3..." },
+          "tier": { "type": "string" },
+          "monthly_limit": { "type": "integer" },
+          "note": { "type": "string" }
+        }
+      },
+      "MeasureRequest": {
+        "type": "object",
+        "required": ["image"],
+        "properties": {
+          "image": {
+            "type": "string",
+            "format": "binary",
+            "description": "Person photo. JPEG or PNG. Minimum 720p. Full body must be visible. Tight-fitting clothing recommended."
+          },
+          "height_cm": {
+            "type": "number",
+            "minimum": 50,
+            "maximum": 250,
+            "example": 165.0,
+            "description": "Person's height in centimetres. Required unless `reference_object_cm` is provided."
+          },
+          "reference_object_cm": {
+            "type": "number",
+            "description": "Long dimension of a reference object visible in the photo (e.g. A4 paper = 29.7cm). Use instead of height_cm."
+          },
+          "gender_profile": {
+            "type": "string",
+            "enum": ["ladies", "men", "children"],
+            "default": "ladies"
+          },
+          "enable_smpl": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable SMPL 3D body fitting. More accurate but slower (20–40s). Set false for fast mode (3–8s)."
+          },
+          "enable_claude": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable Claude Vision validation. Detects photo quality issues and flags unreliable measurements."
+          },
+          "generate_avatar": {
+            "type": "boolean",
+            "default": true,
+            "description": "Generate a 3D GLB avatar. Set false for measurements only."
+          },
+          "generate_async": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return immediately with a task_id. Poll /jobs/{task_id} for result. Recommended for production."
+          }
+        }
+      },
+      "SingleMeasurement": {
+        "type": "object",
+        "properties": {
+          "value_cm": {
+            "type": "number",
+            "description": "Measurement in centimetres",
+            "example": 71.2
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "0.85–1.0 = use directly. 0.70–0.85 = good. 0.50–0.70 = moderate. Below 0.50 = retake photo.",
+            "example": 0.85
+          },
+          "source": {
+            "type": "string",
+            "enum": ["smpl", "silhouette", "geometric", "fused", "override", "default"],
+            "description": "Which pipeline component produced this measurement",
+            "example": "smpl"
+          }
+        }
+      },
+      "MeasureResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "success" },
+          "avatar_id": { "type": "string", "format": "uuid", "nullable": true },
+          "gender_profile": { "type": "string" },
+          "source": { "type": "string" },
+          "task_id": { "type": "string", "nullable": true, "description": "Present only when generate_async=true" },
+          "bust_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "chest_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "waist_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "hip_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "under_breast_waist_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "around_arm_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "around_arm_3_4_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "wrist_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "neck_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "thigh_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "shoulder_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "across_back_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "across_chest_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "shoulder_to_nipple_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "nipple_to_nipple_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "shoulder_to_underbust_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "shoulder_to_waist_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "shoulder_to_hip_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "nape_to_waist_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "height_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "inseam_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "hip_depth_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "sleeve_length_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "blouse_length_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "kaba_length_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "skirt_length_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "slit_length_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "dress_length_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "cape_cm": { "$ref": "#/components/schemas/SingleMeasurement" },
+          "error": { "type": "string", "nullable": true }
+        }
+      },
+      "OverrideRequest": {
+        "type": "object",
+        "required": ["overrides"],
+        "properties": {
+          "overrides": {
+            "type": "object",
+            "description": "Key-value pairs of measurement field name to corrected value in cm. Only include fields being corrected.",
+            "additionalProperties": { "type": "number" },
+            "example": { "wrist_cm": 10.0, "waist_cm": 72.0 }
+          }
+        }
+      },
+      "OverrideResponse": {
+        "type": "object",
+        "properties": {
+          "avatar_id": { "type": "string" },
+          "recalculated_measurements": {
+            "type": "object",
+            "additionalProperties": { "$ref": "#/components/schemas/SingleMeasurement" }
+          },
+          "updated_betas": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 10,
+            "maxItems": 10,
+            "description": "Updated SMPL shape parameters. Store these if you want to regenerate the avatar later."
+          },
+          "convergence_note": { "type": "string" }
+        }
+      },
+      "JobStatusResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["processing", "complete", "failed"] },
+          "task_id": { "type": "string" },
+          "result": { "$ref": "#/components/schemas/MeasureResponse" },
+          "error": { "type": "string", "nullable": true }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Bad request — missing required fields or invalid values",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+            "example": { "detail": "Provide either height_cm or reference_object_cm." }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing or invalid API key",
+        "content": {
+          "application/json": {
+            "example": { "detail": "API key required. Pass X-API-Key header." }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Avatar not found",
+        "content": {
+          "application/json": {
+            "example": { "detail": "Avatar 3f8a2b1c-... not found." }
+          }
+        }
+      },
+      "UnprocessableEntity": {
+        "description": "Image could not be processed",
+        "content": {
+          "application/json": {
+            "examples": {
+              "pose": { "value": { "detail": "PoseDetectionError: No human pose detected. Ensure full body is visible." } },
+              "quality": { "value": { "detail": "ImageQualityError: Image too blurry (score: 45). Retake in better lighting." } },
+              "scale": { "value": { "detail": "ScaleCalibrationError: Height 300cm is implausible. Check value." } }
+            }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "description": "Monthly limit reached",
+        "content": {
+          "application/json": {
+            "example": { "detail": "Monthly limit reached (50 measurements). Upgrade at fitscan.dev/billing" }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "Server error",
+        "content": {
+          "application/json": {
+            "example": { "detail": "SMPL fitting failed. Try with enable_smpl=false." }
+          }
+        }
+      }
+    }
+  }
+}

@@ -16,7 +16,7 @@ ALEMBIC  := $(VENV)/bin/alembic
 BLACK    := $(VENV)/bin/black
 RUFF     := $(VENV)/bin/ruff
 MYPY     := $(VENV)/bin/mypy
-PORT     := 8000
+PORT     := 8008
 
 GREEN  := \033[0;32m
 YELLOW := \033[0;33m
@@ -127,12 +127,8 @@ check: lint typecheck ## Lint + typecheck
 
 docs: ## Export OpenAPI JSON to docs/openapi.json
 	@mkdir -p docs
-	$(VENV)/bin/python -c "
-import json, sys; sys.path.insert(0,'.')
-from fitscan.api.main import app
-print(json.dumps(app.openapi(), indent=2))
-" > docs/openapi.json
-	@echo "$(GREEN)OpenAPI spec → docs/openapi.json$(NC)"
+	$(VENV)/bin/python -c "import json, sys; sys.path.insert(0,'.'); from fitscan.api.main import app; print(json.dumps(app.openapi(), indent=2))" > docs/openapi.json
+	@echo "$(GREEN)OpenAPI spec -> docs/openapi.json$(NC)"
 	@echo "$(YELLOW)Live docs at http://localhost:$(PORT)/docs$(NC)"
 
 # ─── Server deployment ──────────────────────────────────────────────────────
@@ -165,13 +161,7 @@ clean: ## Remove caches and build artefacts
 	rm -rf htmlcov/ .coverage dist/ build/ *.egg-info/
 
 keys-list: ## List all API keys (hashed — no secrets shown)
-	@$(VENV)/bin/python -c "
-from sqlalchemy.orm import Session
-from fitscan.infrastructure.result_store import engine, APIKeyRecord
-with Session(engine) as s:
-    for k in s.query(APIKeyRecord).all():
-        print(f'{k.owner_email:30s} tier={k.tier:8s} {k.usage_this_month}/{k.monthly_limit}/mo active={k.is_active}')
-"
+	@$(VENV)/bin/python -c "from sqlalchemy.orm import Session; from fitscan.infrastructure.result_store import engine, APIKeyRecord; s = Session(engine); [print(f'{k.owner_email:30s} tier={k.tier:8s} {k.usage_this_month}/{k.monthly_limit}/mo active={k.is_active}') for k in s.query(APIKeyRecord).all()]; s.close()"
 
 health: ## Quick health check against running local API
 	@curl -sf http://localhost:$(PORT)/api/v1/health | python3 -m json.tool

@@ -1,0 +1,1019 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FitScan Body Measurement API",
+    "description": "AI-powered body measurement from photographs",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/v1/measure": {
+      "post": {
+        "tags": [
+          "measurements"
+        ],
+        "summary": "Measure Body",
+        "operationId": "measure_body_api_v1_measure_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_measure_body_api_v1_measure_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeasurementsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "tags": [
+          "measurements"
+        ],
+        "summary": "Health",
+        "operationId": "health_api_v1_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/avatar/{avatar_id}/glb": {
+      "get": {
+        "tags": [
+          "measurements"
+        ],
+        "summary": "Get Avatar Glb",
+        "description": "Stream the GLB file for a stored avatar.",
+        "operationId": "get_avatar_glb_api_v1_avatar__avatar_id__glb_get",
+        "parameters": [
+          {
+            "name": "avatar_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Avatar Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/avatar/{avatar_id}/thumbnail": {
+      "get": {
+        "tags": [
+          "measurements"
+        ],
+        "summary": "Get Avatar Thumbnail",
+        "description": "Return a 512x512 PNG preview of the avatar.",
+        "operationId": "get_avatar_thumbnail_api_v1_avatar__avatar_id__thumbnail_get",
+        "parameters": [
+          {
+            "name": "avatar_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Avatar Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/avatar/{avatar_id}/fit-garment": {
+      "post": {
+        "tags": [
+          "measurements"
+        ],
+        "summary": "Fit Garment",
+        "description": "Drape a virtual garment onto a stored avatar. Returns draped GLB.",
+        "operationId": "fit_garment_api_v1_avatar__avatar_id__fit_garment_post",
+        "parameters": [
+          {
+            "name": "avatar_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Avatar Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_fit_garment_api_v1_avatar__avatar_id__fit_garment_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/avatar/{avatar_id}/override": {
+      "post": {
+        "tags": [
+          "measurements"
+        ],
+        "summary": "Override Measurements",
+        "description": "Accept manual measurement corrections via Inverse SMPL.",
+        "operationId": "override_measurements_api_v1_avatar__avatar_id__override_post",
+        "parameters": [
+          {
+            "name": "avatar_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Avatar Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "title": "Overrides"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverrideResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/keys/register": {
+      "post": {
+        "tags": [
+          "measurements",
+          "SaaS"
+        ],
+        "summary": "Register Api Key",
+        "description": "Register for a FitScan API key.",
+        "operationId": "register_api_key_api_v1_keys_register_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_register_api_key_api_v1_keys_register_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/measure/measurements": {
+      "post": {
+        "tags": [
+          "measurements",
+          "Measure"
+        ],
+        "summary": "Measurements only \u2014 no avatar generated",
+        "description": "Faster than /measure. Returns only the 24-field measurement JSON. No GLB is generated.",
+        "operationId": "measure_measurements_only_api_v1_measure_measurements_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_measure_measurements_only_api_v1_measure_measurements_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeasurementsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/measure/avatar": {
+      "post": {
+        "tags": [
+          "measurements",
+          "Measure"
+        ],
+        "summary": "Avatar only \u2014 returns GLB binary directly",
+        "description": "Returns the raw GLB binary. Response Content-Type is model/gltf-binary. No measurements JSON.",
+        "operationId": "measure_avatar_only_api_v1_measure_avatar_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_measure_avatar_only_api_v1_measure_avatar_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Body_fit_garment_api_v1_avatar__avatar_id__fit_garment_post": {
+        "properties": {
+          "garment_type": {
+            "type": "string",
+            "title": "Garment Type",
+            "description": "dress|blouse|kaba|skirt|trousers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "garment_type"
+        ],
+        "title": "Body_fit_garment_api_v1_avatar__avatar_id__fit_garment_post"
+      },
+      "Body_measure_avatar_only_api_v1_measure_avatar_post": {
+        "properties": {
+          "image": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Image"
+          },
+          "height_cm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height Cm"
+          },
+          "reference_object_cm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Object Cm"
+          },
+          "gender_profile": {
+            "type": "string",
+            "title": "Gender Profile",
+            "default": "ladies"
+          }
+        },
+        "type": "object",
+        "required": [
+          "image"
+        ],
+        "title": "Body_measure_avatar_only_api_v1_measure_avatar_post"
+      },
+      "Body_measure_body_api_v1_measure_post": {
+        "properties": {
+          "image": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Image",
+            "description": "Person photo (JPEG/PNG, min 720p)"
+          },
+          "height_cm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height Cm"
+          },
+          "reference_object_cm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Object Cm"
+          },
+          "gender_profile": {
+            "type": "string",
+            "title": "Gender Profile",
+            "default": "ladies"
+          },
+          "enable_smpl": {
+            "type": "boolean",
+            "title": "Enable Smpl",
+            "default": true
+          },
+          "enable_claude": {
+            "type": "boolean",
+            "title": "Enable Claude",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "image"
+        ],
+        "title": "Body_measure_body_api_v1_measure_post"
+      },
+      "Body_measure_measurements_only_api_v1_measure_measurements_post": {
+        "properties": {
+          "image": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Image"
+          },
+          "height_cm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height Cm"
+          },
+          "reference_object_cm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Object Cm"
+          },
+          "gender_profile": {
+            "type": "string",
+            "title": "Gender Profile",
+            "default": "ladies"
+          },
+          "enable_smpl": {
+            "type": "boolean",
+            "title": "Enable Smpl",
+            "default": true
+          },
+          "enable_claude": {
+            "type": "boolean",
+            "title": "Enable Claude",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "image"
+        ],
+        "title": "Body_measure_measurements_only_api_v1_measure_measurements_post"
+      },
+      "Body_register_api_key_api_v1_keys_register_post": {
+        "properties": {
+          "owner_name": {
+            "type": "string",
+            "title": "Owner Name"
+          },
+          "owner_email": {
+            "type": "string",
+            "title": "Owner Email"
+          },
+          "tier": {
+            "type": "string",
+            "title": "Tier",
+            "default": "free"
+          }
+        },
+        "type": "object",
+        "required": [
+          "owner_name",
+          "owner_email"
+        ],
+        "title": "Body_register_api_key_api_v1_keys_register_post"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "MeasurementsResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "gender_profile": {
+            "type": "string",
+            "title": "Gender Profile",
+            "default": "ladies"
+          },
+          "avatar_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Id"
+          },
+          "bust_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "chest_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "waist_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hip_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "under_breast_waist_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "around_arm_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "around_arm_3_4_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "wrist_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "neck_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "thigh_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "shoulder_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "across_back_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "across_chest_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "shoulder_to_nipple_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nipple_to_nipple_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "shoulder_to_underbust_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "shoulder_to_waist_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "shoulder_to_hip_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nape_to_waist_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "height_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inseam_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hip_depth_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sleeve_length_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "blouse_length_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kaba_length_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skirt_length_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slit_length_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dress_length_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cape_cm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SingleMeasurementOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "MeasurementsResponse"
+      },
+      "OverrideResponse": {
+        "properties": {
+          "avatar_id": {
+            "type": "string",
+            "title": "Avatar Id"
+          },
+          "recalculated_measurements": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Recalculated Measurements"
+          },
+          "updated_betas": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Updated Betas"
+          },
+          "convergence_note": {
+            "type": "string",
+            "title": "Convergence Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "avatar_id",
+          "recalculated_measurements",
+          "updated_betas",
+          "convergence_note"
+        ],
+        "title": "OverrideResponse"
+      },
+      "SingleMeasurementOut": {
+        "properties": {
+          "value_cm": {
+            "type": "number",
+            "title": "Value Cm"
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          }
+        },
+        "type": "object",
+        "required": [
+          "value_cm",
+          "confidence",
+          "source"
+        ],
+        "title": "SingleMeasurementOut"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

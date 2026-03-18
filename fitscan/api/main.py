@@ -17,3 +17,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+
+# Serve API documentation at /api-docs
+_docs_dir = Path(__file__).parent.parent.parent / "docs"
+if _docs_dir.exists():
+    app.mount("/api-docs", StaticFiles(directory=str(_docs_dir), html=True), name="api-docs")
+
