@@ -1,0 +1,162 @@
+[
+  {
+    "id": "synthetic_000",
+    "height_cm": 158.8,
+    "chest_cm": 93.6,
+    "waist_cm": 77.0,
+    "hip_cm": 104.9,
+    "neck_cm": 36.6
+  },
+  {
+    "id": "synthetic_001",
+    "height_cm": 148.0,
+    "chest_cm": 97.7,
+    "waist_cm": 75.6,
+    "hip_cm": 98.5,
+    "neck_cm": 37.3
+  },
+  {
+    "id": "synthetic_002",
+    "height_cm": 161.9,
+    "chest_cm": 104.3,
+    "waist_cm": 83.9,
+    "hip_cm": 100.8,
+    "neck_cm": 34.8
+  },
+  {
+    "id": "synthetic_003",
+    "height_cm": 151.9,
+    "chest_cm": 97.0,
+    "waist_cm": 89.8,
+    "hip_cm": 100.3,
+    "neck_cm": 36.7
+  },
+  {
+    "id": "synthetic_004",
+    "height_cm": 164.3,
+    "chest_cm": 83.4,
+    "waist_cm": 75.2,
+    "hip_cm": 103.4,
+    "neck_cm": 39.6
+  },
+  {
+    "id": "synthetic_005",
+    "height_cm": 158.1,
+    "chest_cm": 98.0,
+    "waist_cm": 80.2,
+    "hip_cm": 105.5,
+    "neck_cm": 33.7
+  },
+  {
+    "id": "synthetic_006",
+    "height_cm": 164.5,
+    "chest_cm": 82.9,
+    "waist_cm": 54.4,
+    "hip_cm": 95.8,
+    "neck_cm": 34.3
+  },
+  {
+    "id": "synthetic_007",
+    "height_cm": 167.0,
+    "chest_cm": 100.3,
+    "waist_cm": 67.0,
+    "hip_cm": 105.9,
+    "neck_cm": 34.0
+  },
+  {
+    "id": "synthetic_008",
+    "height_cm": 159.3,
+    "chest_cm": 92.6,
+    "waist_cm": 79.0,
+    "hip_cm": 105.7,
+    "neck_cm": 38.9
+  },
+  {
+    "id": "synthetic_009",
+    "height_cm": 162.8,
+    "chest_cm": 100.2,
+    "waist_cm": 82.3,
+    "hip_cm": 95.6,
+    "neck_cm": 34.8
+  },
+  {
+    "id": "synthetic_010",
+    "height_cm": 156.2,
+    "chest_cm": 99.0,
+    "waist_cm": 75.7,
+    "hip_cm": 116.4,
+    "neck_cm": 34.5
+  },
+  {
+    "id": "synthetic_011",
+    "height_cm": 151.2,
+    "chest_cm": 101.1,
+    "waist_cm": 90.8,
+    "hip_cm": 103.5,
+    "neck_cm": 39.5
+  },
+  {
+    "id": "synthetic_012",
+    "height_cm": 171.4,
+    "chest_cm": 94.2,
+    "waist_cm": 65.2,
+    "hip_cm": 96.3,
+    "neck_cm": 39.9
+  },
+  {
+    "id": "synthetic_013",
+    "height_cm": 148.5,
+    "chest_cm": 95.3,
+    "waist_cm": 80.3,
+    "hip_cm": 97.8,
+    "neck_cm": 39.2
+  },
+  {
+    "id": "synthetic_014",
+    "height_cm": 164.6,
+    "chest_cm": 113.6,
+    "waist_cm": 83.6,
+    "hip_cm": 95.7,
+    "neck_cm": 35.3
+  },
+  {
+    "id": "synthetic_015",
+    "height_cm": 153.3,
+    "chest_cm": 102.6,
+    "waist_cm": 72.9,
+    "hip_cm": 99.5,
+    "neck_cm": 39.2
+  },
+  {
+    "id": "synthetic_016",
+    "height_cm": 154.2,
+    "chest_cm": 92.7,
+    "waist_cm": 61.4,
+    "hip_cm": 92.4,
+    "neck_cm": 35.3
+  },
+  {
+    "id": "synthetic_017",
+    "height_cm": 163.3,
+    "chest_cm": 104.5,
+    "waist_cm": 77.8,
+    "hip_cm": 101.8,
+    "neck_cm": 37.5
+  },
+  {
+    "id": "synthetic_018",
+    "height_cm": 168.7,
+    "chest_cm": 102.1,
+    "waist_cm": 80.5,
+    "hip_cm": 92.9,
+    "neck_cm": 39.7
+  },
+  {
+    "id": "synthetic_019",
+    "height_cm": 163.0,
+    "chest_cm": 104.8,
+    "waist_cm": 77.7,
+    "hip_cm": 113.7,
+    "neck_cm": 35.9
+  }
+]

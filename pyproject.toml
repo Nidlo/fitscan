@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fitscan"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.1.0",
+    "torchvision>=0.16.0",
+    "opencv-python>=4.8.0",
+    "mediapipe>=0.10.0",
+    "rembg>=2.0.50",
+    "trimesh[easy]>=4.0.0",
+    "numpy>=1.26.0",
+    "scipy>=1.11.0",
+    "scikit-image>=0.22.0",
+    "shapely>=2.0.0",
+    "smplx>=0.1.28",
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.4.0",
+    "pydantic-settings>=2.0.0",
+    "anthropic>=0.25.0",
+    "sqlalchemy>=2.0.0",
+    "pillow>=10.0.0",
+    "httpx>=0.25.0",
+    "python-multipart>=0.0.6",
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "loguru>=0.7.0",
+    "python-dotenv>=1.0.0",
+    "psycopg2-binary>=2.9.0",
+    "pgvector>=0.2.0",
+    "alembic>=1.12.0",
+    "celery>=5.3.0",
+    "redis>=5.0.0",
+    "boto3>=1.28.0",
+    "minio>=7.2.0",
+    "xatlas>=0.0.7",
+    "pygltflib>=1.16.0",
+    "networkx>=3.2",
+    "gdown>=4.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.6.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=fitscan --cov-report=term-missing --cov-fail-under=55"
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[tool.setuptools.packages.find]
+include = ["fitscan*"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = false
+warn_unused_configs = true
+ignore_missing_imports = true
+disallow_untyped_defs = false
+check_untyped_defs = false
+no_implicit_optional = false
+
+[[tool.mypy.overrides]]
+module = [
+    "fitscan.smpl.*",
+    "fitscan.avatar.*",
+    "fitscan.validation.claude_validator",
+    "fitscan.infrastructure.result_store",
+    "fitscan.cv_pipeline.scale_calibrator",
+]
+ignore_errors = true
