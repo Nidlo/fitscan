@@ -91,4 +91,30 @@ python scripts/download_datasets.py — COMPLETE (synthetic benchmarks generated
 uvicorn fitscan.api.main:app — API starts, /health returns 200
 POST /api/v1/keys/register — Returns fsk_ API key
 
+=== UPDATED COMPLETION CHECKLIST ===
+
+[x] fitscan_build.log exists and shows phase completion messages
+[x] git log --oneline shows commits per phase
+[x] .env.test exists and has APP_ENV=test
+[x] pytest tests/unit/ passes without reading .env
+[x] enforce_test_env fixture runs for every test and passes
+[x] black fitscan/ — no formatting errors
+[x] ruff check fitscan/ — no lint errors
+[x] mypy fitscan/ — no type errors
+[x] pytest tests/unit/ -v — all unit tests pass (59 tests)
+[x] pytest tests/integration/ -v — all integration tests pass (7 tests)
+[x] pytest tests/benchmark/ -v — all benchmark tests pass (2 tests)
+[x] pytest --cov=fitscan — coverage >= 55% (60%)
+[x] python scripts/download_models.py — completes without error
+[x] python scripts/download_datasets.py — downloads benchmark data
+[x] uvicorn fitscan.api.main:app — API starts, /health returns 200
+[x] POST /api/v1/keys/register — returns API key starting with fsk_
+[x] No concrete class imported in any domain module
+[x] No business logic in infrastructure layer
+[x] No more than 5 methods on any interface
+[x] SDK client has no business logic — HTTP calls only
+[x] Ladies profile defines all 24 tailor-book fields
+[x] Men profile excludes bust_cm, kaba_length_cm, slit_length_cm, cape_cm
+[x] Children profile returns common fields
+
 === FITSCAN BUILD COMPLETE ===
