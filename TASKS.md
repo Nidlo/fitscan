@@ -252,7 +252,7 @@ These are minor / defense-in-depth items from [audits/fitscan/99_FINDINGS.md](..
 
 ## QA roadmap-gap addendum (audit gap, 2026-05-04)
 
-Sourced from [../audits/qa-roadmap-gaps-2026-05-04.md](../audits/qa-roadmap-gaps-2026-05-04.md). New ⬜ entries identified during QA CSV generation that warrant roadmap tracking.
+Sourced from [../backend/audits/qa-roadmap-gaps-2026-05-04.md](../backend/audits/qa-roadmap-gaps-2026-05-04.md). New ⬜ entries identified during QA CSV generation that warrant roadmap tracking.
 
 - [⬜] **FS-NIDLO-MEAS-19** — Camera permission denied UX path. Today the upload flow silently fails when Safari (or any browser) denies camera. Should fall through to file-picker mode + "use a saved photo" guidance. _(audit gap, 2026-05-04 — QA-GAP-A-16)_
 - [⬜] **FS-NIDLO-MEAS-20** — Pose-quality preview / silhouette overlay on the upload preview screen so users self-correct before submitting. Reduces 422 "no person detected" rates (failure-modes §4.3). _(audit gap, 2026-05-04 — QA-GAP-A-17)_
