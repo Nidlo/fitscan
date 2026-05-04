@@ -1,7 +1,22 @@
 """FastAPI application entry point."""
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Pillow's default DOS guard is conservative; tighten it to twice the
+# largest sensible camera capture so a malicious decompression bomb fails
+# fast instead of allocating gigabytes (audit FS-C4). Override via env in
+# the unlikely case a real workflow needs more.
+try:
+    from PIL import Image
+
+    Image.MAX_IMAGE_PIXELS = int(
+        os.getenv("FITSCAN_MAX_IMAGE_PIXELS", str(60 * 1024 * 1024))
+    )
+except ImportError:  # Pillow is a dep but defend against import-time issues
+    pass
 
 from .routes import router
 
@@ -23,5 +38,6 @@ from pathlib import Path
 # Serve API documentation at /api-docs
 _docs_dir = Path(__file__).parent.parent.parent / "docs"
 if _docs_dir.exists():
-    app.mount("/api-docs", StaticFiles(directory=str(_docs_dir), html=True), name="api-docs")
-
+    app.mount(
+        "/api-docs", StaticFiles(directory=str(_docs_dir), html=True), name="api-docs"
+    )

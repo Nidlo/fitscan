@@ -50,7 +50,13 @@ class MeshAnalyzer:
         scale: ScaleFactor,
         gender_profile: str = "ladies",
     ) -> BodyMeasurements:
-        """Extract all tailor-book measurements from SMPL mesh."""
+        """Extract all tailor-book measurements from SMPL mesh.
+
+        Expects `mesh` to already be scaled to real-world metres (the
+        orchestrator does this via `scale_mesh_to_height` when a user
+        height is available — see audit FS-H13). If the mesh is still in
+        template space, every output will cluster around SMPL defaults.
+        """
         y_min, y_max = mesh.bounds[0][1], mesh.bounds[1][1]
         y_range = y_max - y_min
         m_to_cm = 100.0

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 from fitscan.application.pipeline_orchestrator import PipelineOrchestrator
 from fitscan.cv_pipeline.pose_detector import PoseDetector
@@ -63,11 +64,42 @@ class MeasurementService:
         height_cm: float | None = None,
         reference_object_cm: float | None = None,
         gender_profile: str = "ladies",
+        subject_id: str | None = None,
     ) -> dict:
         result = self._pipeline.run(
             Path(image_path),
             height_cm=height_cm,
             reference_object_cm=reference_object_cm,
             gender_profile=gender_profile,
+            subject_id=subject_id,
         )
-        return result.to_dict()
+        return result.measurements.to_dict()
+
+    def measure_with_mesh(
+        self,
+        image_path: str | Path,
+        height_cm: float | None = None,
+        reference_object_cm: float | None = None,
+        gender_profile: str = "ladies",
+        subject_id: str | None = None,
+    ) -> tuple[Any, Any | None, list[float], list[float]]:
+        """Measurements + the fitted SMPL mesh.
+
+        Returns `(BodyMeasurements, mesh, betas, thetas)`. `mesh` is None
+        when SMPL fitting was disabled or failed; the avatar route should
+        return a 5xx in that case rather than render an unscaled avatar.
+        Replaces the broken `/measure/avatar` call site (audit FS-C6).
+        """
+        result = self._pipeline.run_with_mesh(
+            Path(image_path),
+            height_cm=height_cm,
+            reference_object_cm=reference_object_cm,
+            gender_profile=gender_profile,
+            subject_id=subject_id,
+        )
+        return (
+            result.measurements,
+            result.mesh,
+            result.betas or [],
+            result.thetas or [],
+        )

@@ -46,12 +46,13 @@ class ScaleCalibrator:
             )
         px_per_cm = pixel_height / height_cm
         logger.info(
-            f"Scale: {px_per_cm:.2f} px/cm " f"(pixel height: {pixel_height:.0f}px)"
+            f"Scale: {px_per_cm:.2f} px/cm (pixel height: {pixel_height:.0f}px)"
         )
         return ScaleFactor(
             pixels_per_cm=px_per_cm,
             source="user_height",
             confidence=0.90,
+            target_height_cm=height_cm,
         )
 
     def calibrate_from_reference_object(

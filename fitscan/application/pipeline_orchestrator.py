@@ -5,13 +5,30 @@ Follows the dependency injection pattern — all dependencies injected.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from loguru import logger
 
 from fitscan.domain.exceptions import ImageQualityError
 from fitscan.domain.models import BodyMeasurements, ValidationResult
+
+
+@dataclass(frozen=True)
+class PipelineResult:
+    """Full output of the measurement pipeline.
+
+    `measurements` is always populated. `mesh`, `betas`, `thetas` are
+    populated only when SMPL fitting was enabled and succeeded; otherwise
+    they're None and downstream avatar generation should be skipped.
+    """
+
+    measurements: BodyMeasurements
+    mesh: Any | None = None
+    betas: list[float] | None = None
+    thetas: list[float] | None = None
 
 
 class PipelineOrchestrator:
@@ -57,7 +74,28 @@ class PipelineOrchestrator:
         height_cm: float | None = None,
         reference_object_cm: float | None = None,
         gender_profile: str = "ladies",
+        subject_id: str | None = None,
     ) -> BodyMeasurements:
+        return self.run_with_mesh(
+            image_path=image_path,
+            height_cm=height_cm,
+            reference_object_cm=reference_object_cm,
+            gender_profile=gender_profile,
+            subject_id=subject_id,
+        ).measurements
+
+    def run_with_mesh(
+        self,
+        image_path: Path,
+        height_cm: float | None = None,
+        reference_object_cm: float | None = None,
+        gender_profile: str = "ladies",
+        subject_id: str | None = None,
+    ) -> PipelineResult:
+        """Like `run()` but also surfaces the SMPL mesh + parameters when
+        available. Used by `/measure/avatar` to render the GLB without
+        re-running the pipeline.
+        """
         logger.info(f"Processing {image_path}")
         image = self._loader.load(image_path)
         ok, reason = self._loader.validate_quality(image)
@@ -85,13 +123,16 @@ class PipelineOrchestrator:
         )
         sources.append(silhouette_result)
 
+        mesh: Any | None = None
         if self._enable_smpl:
             try:
-                mesh = self._fitter.fit(processed.original, pose)
+                raw_mesh = self._fitter.fit(processed.original, pose)
+                mesh = self._rescale_mesh_to_height(raw_mesh, scale)
                 smpl_result = self._mesh.measure(mesh, scale, gender_profile)
                 sources.append(smpl_result)
             except Exception as e:
                 logger.warning(f"SMPL fitting failed, using silhouette only: {e}")
+                mesh = None
 
         fused = self._fuser.fuse(sources)
 
@@ -99,7 +140,12 @@ class PipelineOrchestrator:
 
         if self._enable_claude:
             try:
-                claude_result = self._claude_validator.validate(image, fused)
+                # Body photo is shipped to Anthropic only when subject_id is
+                # supplied (explicit consent). Without it the validator no-ops
+                # and returns a default-pass result.
+                claude_result = self._claude_validator.validate(
+                    image, fused, subject_id=subject_id
+                )
                 validation = self._merge_validations(rule_result, claude_result)
             except Exception as e:
                 logger.warning(f"Claude validation skipped: {e}")
@@ -109,7 +155,24 @@ class PipelineOrchestrator:
 
         final = self._scorer.score(fused, validation, sources)
         logger.info(f"Pipeline complete. Height: {final.height_cm}")
-        return final
+        return PipelineResult(measurements=final, mesh=mesh)
+
+    @staticmethod
+    def _rescale_mesh_to_height(mesh: Any, scale: Any) -> Any:
+        """Rescale an SMPL mesh from canonical template space to the user's
+        actual height, when one was supplied at calibration time. Without
+        this every height/circumference output clusters around the SMPL
+        template defaults (audit FS-H13).
+        """
+        if scale.target_height_cm is None:
+            return mesh
+
+        import trimesh
+
+        from fitscan.smpl.smpl_utils import scale_mesh_to_height
+
+        scaled = scale_mesh_to_height(np.asarray(mesh.vertices), scale.target_height_cm)
+        return trimesh.Trimesh(vertices=scaled, faces=mesh.faces, process=False)
 
     def _merge_validations(
         self, rule: ValidationResult, claude: ValidationResult
@@ -128,7 +191,5 @@ class PipelineOrchestrator:
             photo_quality_score=score,
             quality_issues=issues,
             recommendation=recommend,
-            raw_response=(
-                f"rule: {rule.raw_response} | " f"claude: {claude.raw_response}"
-            ),
+            raw_response=(f"rule: {rule.raw_response} | claude: {claude.raw_response}"),
         )

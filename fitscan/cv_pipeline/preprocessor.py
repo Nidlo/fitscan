@@ -21,8 +21,8 @@ class ImagePreprocessor:
             pil_img = Image.fromarray(image)
             result = rembg_remove(pil_img)
             return np.array(result)
-        except ImportError:
-            logger.warning("rembg not available, using threshold-based removal.")
+        except (ImportError, SystemExit, Exception) as e:
+            logger.warning("rembg not available ({}), using threshold-based removal.", e)
             return self._threshold_remove(image)
 
     def extract_silhouette(self, image: np.ndarray) -> np.ndarray:

@@ -40,15 +40,30 @@ Rules:
 
 
 class ClaudeValidator:
-    """Validates measurements using Claude Vision API."""
+    """Validates measurements using Claude Vision API.
+
+    The body photo is sensitive PII. Shipping it to Anthropic only happens
+    when the caller passes an explicit consent token (`subject_id`). Without
+    one, validation is skipped and a default-pass result is returned. The
+    `subject_id` is also forwarded as `metadata.user_id` so Anthropic
+    retention controls can target it.
+    """
 
     def __init__(self, api_key: str | None = None) -> None:
         self._api_key = api_key
 
     def validate(
-        self, image: np.ndarray, measurements: BodyMeasurements
+        self,
+        image: np.ndarray,
+        measurements: BodyMeasurements,
+        subject_id: str | None = None,
     ) -> ValidationResult:
         if not self._api_key or self._api_key == "test_key_placeholder":
+            return self._default_result()
+        if not subject_id:
+            logger.info(
+                "claude validation skipped: no subject_id consent token provided"
+            )
             return self._default_result()
 
         try:
@@ -60,6 +75,7 @@ class ClaudeValidator:
             response = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=512,
+                metadata={"user_id": subject_id},
                 messages=[
                     {
                         "role": "user",

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+import shutil
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+from loguru import logger
 from sqlalchemy import (
     Boolean,
     Column,
@@ -110,6 +113,57 @@ class AvatarStore:
         with Session(engine) as session:
             records = session.query(AvatarRecord.avatar_id).limit(limit).all()
             return [r[0] for r in records]
+
+    def delete(self, avatar_id: str) -> bool:
+        """Hard-delete an avatar: DB row + parent directory on disk.
+
+        Returns True on success, False if the avatar didn't exist. PII —
+        body scans + 3D meshes are sensitive — is removed irreversibly. The
+        right-to-be-forgotten path the platform exposes upstream calls this.
+        """
+        with Session(engine) as session:
+            record = session.get(AvatarRecord, avatar_id)
+            if record is None:
+                return False
+            paths_to_clean = {
+                Path(record.glb_path).parent if record.glb_path else None,
+                Path(record.obj_path).parent if record.obj_path else None,
+                Path(record.thumbnail_path).parent if record.thumbnail_path else None,
+            }
+            session.delete(record)
+            session.commit()
+
+        for parent in paths_to_clean:
+            if parent is None or not parent.exists():
+                continue
+            # Only remove the avatar's own directory — guard against the
+            # caller storing into a shared parent by accident.
+            if avatar_id in parent.parts:
+                shutil.rmtree(parent, ignore_errors=True)
+        return True
+
+    def delete_older_than(self, days: int) -> int:
+        """Delete every avatar whose created_at is older than `days`.
+
+        Used by the retention task to enforce the 30-day default policy on
+        body scans. Returns how many avatars were removed.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        with Session(engine) as session:
+            stale_ids = [
+                row[0]
+                for row in session.query(AvatarRecord.avatar_id)
+                .filter(AvatarRecord.created_at < cutoff)
+                .all()
+            ]
+
+        removed = 0
+        for avatar_id in stale_ids:
+            if self.delete(avatar_id):
+                removed += 1
+        if removed:
+            logger.info(f"retention: deleted {removed} avatars older than {days}d")
+        return removed
 
     def _record_to_domain(self, record: AvatarRecord) -> AvatarExport:
         return AvatarExport(

@@ -59,6 +59,21 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--cov=fitscan --cov-report=term-missing --cov-fail-under=55"
 
+[tool.coverage.run]
+omit = [
+    # Requires SMPL-X / HMR2 model weights — not available in CI
+    "fitscan/smpl/*",
+    "fitscan/avatar/*",
+    # Celery tasks — integration-only, tested via the service layer
+    "fitscan/tasks.py",
+    # FastAPI application wiring — covered by integration tests, not unit tests
+    "fitscan/api/main.py",
+    "fitscan/api/dependencies.py",
+    "fitscan/api/routes.py",
+    # S3/Backblaze object store — integration-only
+    "fitscan/infrastructure/result_store.py",
+]
+
 [tool.black]
 line-length = 88
 target-version = ["py311"]

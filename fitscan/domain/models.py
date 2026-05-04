@@ -34,6 +34,12 @@ class ScaleFactor:
     pixels_per_cm: float
     source: str  # "user_height" | "reference_object" | "estimated"
     confidence: float
+    # Set when scale was calibrated from the user's stated height. The SMPL
+    # mesh comes out of the body-fitter at template scale (~1.7m), so
+    # MeshAnalyzer rescales it to this value before extracting measurements.
+    # When None (e.g. reference-object calibration), measurements fall back
+    # to silhouette-based scaling.
+    target_height_cm: float | None = None
 
 
 @dataclass(frozen=True)
