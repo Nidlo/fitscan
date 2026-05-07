@@ -27,6 +27,13 @@ class MeasurementsResponse(BaseModel):
     status: str
     gender_profile: str = "ladies"
     avatar_id: Optional[str] = None
+    # Explicit unit declaration on every response so callers (the Nidlo
+    # Laravel backend, the SDK, third parties) never have to infer the unit
+    # from the `_cm` field suffixes. Internal pipeline values are always cm;
+    # downstream presentation layers convert to inches / mm at their own
+    # boundary. Adding a new unit here is a contract change — coordinate
+    # with the backend's UnitConverter and the frontend's preferences store.
+    unit: str = "cm"
     # Circumferences
     bust_cm: Optional[SingleMeasurementOut] = None
     chest_cm: Optional[SingleMeasurementOut] = None
@@ -63,6 +70,18 @@ class MeasurementsResponse(BaseModel):
     # Status
     source: Optional[str] = None
     error: Optional[str] = None
+    # S5 — Claude vision verification of CV landmarks the MediaPipe pose
+    # detector flagged as low-visibility. Populated only when the pipeline
+    # detected occluded landmarks AND a `subject_id` consent token was
+    # provided. Shape:
+    #   {"verdicts": {<landmark_name>: {"verdict": str, "x": float|null, "y": float|null}}}
+    # Verdict values: visible_at_xy | pose_estimate | occluded_unrecoverable.
+    landmark_verification: Optional[dict] = None
+    # S2.5 — Per-landmark normalized coordinates (0-1) from MediaPipe pose
+    # detection, surfaced so consumers can render an overlay on the
+    # source photo. Shape: {<name>: {"x": float, "y": float, "visibility": float}}.
+    # Names match `LANDMARK_NAMES` in cv_pipeline.pose_detector.
+    landmarks: Optional[dict] = None
 
 
 class MeasurementOverrideRequest(BaseModel):

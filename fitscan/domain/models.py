@@ -185,6 +185,34 @@ class ValidationResult:
 
 
 @dataclass(frozen=True)
+class LandmarkVerdict:
+    """Per-landmark verdict from Claude vision (S5).
+
+    `verdict`:
+      - "visible_at_xy" — Claude identified the landmark; (x, y) populated
+      - "pose_estimate" — Claude inferred from anatomy; (x, y) is best guess
+      - "occluded_unrecoverable" — even Claude can't place it; (x, y) None
+    """
+
+    landmark: str
+    verdict: str
+    x: Optional[float] = None
+    y: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class LandmarkVerification:
+    """Result of `ClaudeValidator.verify_landmarks` — the layered-AI
+    verification pass that runs between MediaPipe pose detection and
+    measurement computation. Only populated when the pipeline detected
+    occluded landmarks AND the caller supplied a consent token (audit
+    FS-C3 / S5)."""
+
+    verdicts: dict[str, LandmarkVerdict]
+    raw_response: str
+
+
+@dataclass(frozen=True)
 class AvatarExport:
     """Exportable 3D avatar produced from SMPL mesh fitting."""
 

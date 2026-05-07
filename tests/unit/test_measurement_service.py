@@ -30,12 +30,12 @@ class TestMeasurementService:
     def test_measure_delegates_to_pipeline_and_returns_dict(self):
         mock_pipeline = MagicMock()
         measurements = make_measurements()
-        mock_pipeline.run.return_value = PipelineResult(measurements=measurements)
+        mock_pipeline.run_with_mesh.return_value = PipelineResult(measurements=measurements)
 
         svc = MeasurementService(pipeline=mock_pipeline)
         result = svc.measure("/tmp/front.jpg", height_cm=170.0)
 
-        mock_pipeline.run.assert_called_once_with(
+        mock_pipeline.run_with_mesh.assert_called_once_with(
             Path("/tmp/front.jpg"),
             height_cm=170.0,
             reference_object_cm=None,
@@ -59,7 +59,7 @@ class TestMeasurementService:
             subject_id="user-abc",
         )
 
-        mock_pipeline.run.assert_called_once_with(
+        mock_pipeline.run_with_mesh.assert_called_once_with(
             Path("/tmp/img.jpg"),
             height_cm=160.0,
             reference_object_cm=21.0,
@@ -72,7 +72,7 @@ class TestMeasurementService:
         measurements = make_measurements(
             shoulder_cm=SingleMeasurement(value_cm=38.5, confidence=0.80, source="geometric"),
         )
-        mock_pipeline.run.return_value = PipelineResult(measurements=measurements)
+        mock_pipeline.run_with_mesh.return_value = PipelineResult(measurements=measurements)
 
         svc = MeasurementService(pipeline=mock_pipeline)
         result = svc.measure("/tmp/img.jpg")

@@ -83,3 +83,27 @@ class PoseDetector:
 
     def __del__(self) -> None:
         self.close()
+
+    @staticmethod
+    def find_occluded_landmarks(
+        pose: BodyPose,
+        threshold: float = 0.3,
+    ) -> list[str]:
+        """Return the names of landmarks whose MediaPipe `visibility` falls
+        below `threshold`. The S5 layered-AI flow feeds these to
+        `ClaudeValidator.verify_landmarks` for vision-based verification —
+        clothing folds, low-light arms, hair-over-shoulder are exactly the
+        cases where MediaPipe's confidence drops below the
+        cv-pipeline-trustable bar but a human (or a vision model) can still
+        place the joint by silhouette.
+
+        The default threshold matches MediaPipe's
+        `MIN_DETECTION_CONFIDENCE` so anything the model itself isn't
+        confident enough to use as a tracking anchor is candidate for
+        re-verification.
+        """
+        return sorted(
+            name
+            for name, kp in pose.keypoints.items()
+            if kp.visibility < threshold
+        )

@@ -12,7 +12,38 @@ import cv2
 import numpy as np
 from loguru import logger
 
-from fitscan.domain.models import BodyMeasurements, ValidationResult
+from fitscan.domain.models import (
+    BodyMeasurements,
+    LandmarkVerdict,
+    LandmarkVerification,
+    ValidationResult,
+)
+
+LANDMARK_VERIFICATION_PROMPT = """
+You are a body-landmark verification assistant for a fashion-tech CV pipeline.
+The pipeline detected these landmarks at low visibility — clothing folds,
+shadows, hair, or pose may be hiding them. Look at the photo and place each
+one as best you can.
+
+Landmarks: {landmarks}
+
+Respond with ONLY valid JSON:
+{{
+  "verifications": {{
+    "<landmark_name>": {{
+      "verdict": "<visible_at_xy | pose_estimate | occluded_unrecoverable>",
+      "x": <float 0-1 or null>,
+      "y": <float 0-1 or null>
+    }}
+  }}
+}}
+
+Verdict rules:
+- visible_at_xy: you can SEE the landmark; (x, y) are normalised image coords
+- pose_estimate: you cannot see it directly but can infer from anatomy +
+  surrounding visible joints. (x, y) is your best guess.
+- occluded_unrecoverable: even with anatomy you can't place it. x, y null.
+"""
 
 VALIDATION_PROMPT = """
 You are a body measurement validation assistant for a fashion tech system.
@@ -114,6 +145,92 @@ class ClaudeValidator:
         except Exception as e:
             logger.warning(f"Claude validation failed: {e}")
             return self._default_result()
+
+    def verify_landmarks(
+        self,
+        image: np.ndarray,
+        occluded: list[str],
+        subject_id: str | None = None,
+    ) -> LandmarkVerification:
+        """S5 — Claude vision verifies CV landmarks the MediaPipe pose
+        detector flagged as low-visibility. Returns per-landmark
+        verdicts with optional Claude-suggested coordinates.
+
+        Same consent gate as `validate()`: without an `api_key` AND a
+        `subject_id` the photo is never shipped to Anthropic and an
+        empty verification is returned (no verdicts, no API call).
+        """
+        if not occluded:
+            return LandmarkVerification(verdicts={}, raw_response="")
+        if not self._api_key or self._api_key == "test_key_placeholder":
+            return LandmarkVerification(verdicts={}, raw_response="")
+        if not subject_id:
+            logger.info(
+                "claude landmark verification skipped: no subject_id consent token"
+            )
+            return LandmarkVerification(verdicts={}, raw_response="")
+
+        try:
+            from anthropic import Anthropic
+
+            client = Anthropic(api_key=self._api_key)
+            img_b64 = self._encode_image(image)
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=1024,
+                metadata={"user_id": subject_id},
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/jpeg",
+                                    "data": img_b64,
+                                },
+                            },
+                            {
+                                "type": "text",
+                                "text": LANDMARK_VERIFICATION_PROMPT.format(
+                                    landmarks=", ".join(occluded),
+                                ),
+                            },
+                        ],
+                    }
+                ],
+            )
+            raw = response.content[0].text
+            parsed = json.loads(raw)
+            verdicts: dict[str, LandmarkVerdict] = {}
+            for name, payload in (parsed.get("verifications") or {}).items():
+                if not isinstance(payload, dict):
+                    continue
+                verdict = str(payload.get("verdict", "occluded_unrecoverable"))
+                if verdict not in {
+                    "visible_at_xy",
+                    "pose_estimate",
+                    "occluded_unrecoverable",
+                }:
+                    continue
+                x = payload.get("x")
+                y = payload.get("y")
+                verdicts[name] = LandmarkVerdict(
+                    landmark=name,
+                    verdict=verdict,
+                    x=float(x) if isinstance(x, (int, float)) else None,
+                    y=float(y) if isinstance(y, (int, float)) else None,
+                )
+            return LandmarkVerification(verdicts=verdicts, raw_response=raw)
+        except json.JSONDecodeError:
+            logger.warning(
+                "Claude landmark verification returned non-JSON; skipping."
+            )
+            return LandmarkVerification(verdicts={}, raw_response="")
+        except Exception as e:  # noqa: BLE001 — defence in depth
+            logger.warning(f"Claude landmark verification failed: {e}")
+            return LandmarkVerification(verdicts={}, raw_response="")
 
     def _encode_image(self, image: np.ndarray) -> str:
         rgb = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)

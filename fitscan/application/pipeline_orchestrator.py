@@ -12,8 +12,14 @@ from typing import Any
 import numpy as np
 from loguru import logger
 
+from fitscan.cv_pipeline.pose_detector import PoseDetector
 from fitscan.domain.exceptions import ImageQualityError
-from fitscan.domain.models import BodyMeasurements, ValidationResult
+from fitscan.domain.models import (
+    BodyMeasurements,
+    BodyPose,
+    LandmarkVerification,
+    ValidationResult,
+)
 
 
 @dataclass(frozen=True)
@@ -23,12 +29,21 @@ class PipelineResult:
     `measurements` is always populated. `mesh`, `betas`, `thetas` are
     populated only when SMPL fitting was enabled and succeeded; otherwise
     they're None and downstream avatar generation should be skipped.
+
+    `landmark_verification` is populated only when occluded landmarks
+    were detected AND the caller opted in via `subject_id` (S5).
+
+    `pose` is the raw MediaPipe pose detection — surfaced so the API
+    response can carry per-landmark coordinates for the S2.5 photo
+    overlay.
     """
 
     measurements: BodyMeasurements
     mesh: Any | None = None
     betas: list[float] | None = None
     thetas: list[float] | None = None
+    landmark_verification: LandmarkVerification | None = None
+    pose: BodyPose | None = None
 
 
 class PipelineOrchestrator:
@@ -105,6 +120,24 @@ class PipelineOrchestrator:
         processed = self._preprocessor.process(image)
         pose = self._pose_detector.detect(processed.original)
 
+        # S5 — feed any low-visibility landmarks to Claude for vision-based
+        # verification BEFORE measurements compute. Consent-gated by
+        # subject_id (audit FS-C3); skipped silently when Claude is off
+        # or no landmarks are occluded.
+        landmark_verification: LandmarkVerification | None = None
+        if self._enable_claude:
+            occluded = PoseDetector.find_occluded_landmarks(pose)
+            if occluded:
+                try:
+                    landmark_verification = self._claude_validator.verify_landmarks(
+                        processed.original,
+                        occluded=occluded,
+                        subject_id=subject_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"Landmark verification skipped: {e}")
+                    landmark_verification = None
+
         if height_cm:
             scale = self._scale_calibrator.calibrate_from_height(pose, height_cm)
         elif reference_object_cm:
@@ -155,7 +188,12 @@ class PipelineOrchestrator:
 
         final = self._scorer.score(fused, validation, sources)
         logger.info(f"Pipeline complete. Height: {final.height_cm}")
-        return PipelineResult(measurements=final, mesh=mesh)
+        return PipelineResult(
+            measurements=final,
+            mesh=mesh,
+            landmark_verification=landmark_verification,
+            pose=pose,
+        )
 
     @staticmethod
     def _rescale_mesh_to_height(mesh: Any, scale: Any) -> Any:

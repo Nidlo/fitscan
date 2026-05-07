@@ -66,14 +66,41 @@ class MeasurementService:
         gender_profile: str = "ladies",
         subject_id: str | None = None,
     ) -> dict:
-        result = self._pipeline.run(
+        # Use run_with_mesh so the layered-AI landmark verification (S5)
+        # surfaces in the response payload alongside measurements. The
+        # mesh result is discarded — callers needing it use measure_with_mesh.
+        result = self._pipeline.run_with_mesh(
             Path(image_path),
             height_cm=height_cm,
             reference_object_cm=reference_object_cm,
             gender_profile=gender_profile,
             subject_id=subject_id,
         )
-        return result.measurements.to_dict()
+        out = result.measurements.to_dict()
+        if result.landmark_verification is not None and result.landmark_verification.verdicts:
+            out["landmark_verification"] = {
+                "verdicts": {
+                    name: {
+                        "verdict": v.verdict,
+                        "x": v.x,
+                        "y": v.y,
+                    }
+                    for name, v in result.landmark_verification.verdicts.items()
+                },
+            }
+        if result.pose is not None:
+            # S2.5 — per-landmark normalized coordinates so consumers can
+            # render an overlay on the source photo. Names match
+            # `cv_pipeline.pose_detector.LANDMARK_NAMES`.
+            out["landmarks"] = {
+                name: {
+                    "x": kp.x,
+                    "y": kp.y,
+                    "visibility": kp.visibility,
+                }
+                for name, kp in result.pose.keypoints.items()
+            }
+        return out
 
     def measure_with_mesh(
         self,
