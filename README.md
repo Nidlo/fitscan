@@ -98,3 +98,18 @@ Both share the server — FitScan on `127.0.0.1:8000`, StitchHub on `:443`.
 FitScan is **not** exposed to the internet directly.
 
 See [OPERATIONS.md](OPERATIONS.md) for full local and server deployment guide.
+
+---
+
+## Launching as a SaaS product
+
+[LAUNCHING.md](LAUNCHING.md) ties together the **product + business + integration** angle that
+README + OPERATIONS don't cover:
+
+- The three audiences Fitscan serves (Nidlo internal, external SaaS customers, free-trial visitors)
+- Snad's deployment checklist (env vars, systemd, the two API keys that matter)
+- How the Laravel backend talks to Fitscan and what to keep in sync
+- Pricing tiers, suggested USD per-call costs, and unit economics (~$0.005/call floor)
+- The customer signup flow — today vs target
+- Profitability path: subscription vs credit-pack monetisation
+- Pre-launch checklist of pending Snad-decisions
