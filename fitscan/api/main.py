@@ -18,6 +18,7 @@ try:
 except ImportError:  # Pillow is a dep but defend against import-time issues
     pass
 
+from .admin_routes import router as admin_router
 from .routes import router
 
 app = FastAPI(
@@ -32,6 +33,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+# FS-NIDLO-OPS-01 — Admin-only ops endpoints (Celery health, future:
+# usage metrics for RPT-006). Mounted separately from `router` because
+# the auth gate is a different shared secret (X-Admin-API-Key, not the
+# per-tenant X-API-Key).
+app.include_router(admin_router)
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
