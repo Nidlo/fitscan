@@ -42,10 +42,19 @@ except Exception as e:
     fail("Register API key", str(e))
 
 # 3. Reject unauthenticated
+# FS-NIDLO-TEST-10 — assertion expects 401, which the verify_api_key
+# dependency raises when X-API-Key is missing. Requires
+# FITSCAN_REQUIRE_API_KEY=true (the prod default) — when the local
+# `make dev` env has it set false, this assertion legitimately fails
+# and that's a hint to the operator: smoke tests should run against
+# a prod-shaped env.
 try:
     r = client.post(f"{BASE}/api/v1/measure",
         files={"image": ("x.jpg", b"fake", "image/jpeg")}, data={"height_cm": "165"})
-    assert r.status_code == 401
+    assert r.status_code == 401, (
+        f"expected 401 (verify_api_key gate), got {r.status_code}. "
+        "If you're hitting this in dev, ensure FITSCAN_REQUIRE_API_KEY=true."
+    )
     ok("Reject unauthenticated request")
 except Exception as e:
     fail("Reject unauthenticated request", str(e))
