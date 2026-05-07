@@ -82,6 +82,14 @@ class MeasurementsResponse(BaseModel):
     # source photo. Shape: {<name>: {"x": float, "y": float, "visibility": float}}.
     # Names match `LANDMARK_NAMES` in cv_pipeline.pose_detector.
     landmarks: Optional[dict] = None
+    # FS-NIDLO-VALID-03 — Structured signals about pipeline state the
+    # frontend can route on without re-deriving from confidence numbers.
+    # Empty list when nothing degraded. Currently emitted:
+    #   "validators_disagree" — rule + Claude disagreed on `is_valid`.
+    # The merged is_valid + recommendation still reflect the historical
+    # contract; this is additive metadata for "manual review needed"
+    # badges and ops dashboards.
+    degraded_modes: list[str] = Field(default_factory=list)
 
 
 class MeasurementOverrideRequest(BaseModel):

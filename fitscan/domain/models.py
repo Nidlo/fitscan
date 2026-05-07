@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
@@ -182,6 +182,13 @@ class ValidationResult:
     quality_issues: list[str]
     recommendation: str  # "proceed" | "retake"
     raw_response: str
+    # Structured signals about which sub-pipelines fell back, disagreed,
+    # or returned partial results. Strings stay short + ops-readable.
+    # Frontend renders "manual review recommended" badges off these.
+    # Currently emitted: "validators_disagree" (rule vs Claude is_valid
+    # diverge — see PipelineOrchestrator._merge_validations).
+    # (FS-NIDLO-VALID-03)
+    degraded_modes: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

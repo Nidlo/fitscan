@@ -106,6 +106,10 @@ class MeasurementService:
                 }
                 for name, kp in result.pose.keypoints.items()
             }
+        # FS-NIDLO-VALID-03 — Always emit `degraded_modes` (empty list
+        # when nothing degraded) so consumers can rely on the field
+        # existing without doing per-version key checks.
+        out["degraded_modes"] = list(result.degraded_modes)
         return out
 
     def measure_with_mesh(

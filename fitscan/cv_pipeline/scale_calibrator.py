@@ -24,7 +24,21 @@ class ScaleCalibrator:
         "left_foot_index",
         "right_foot_index",
     )
+    # Anthropometric correction — `nose` lands roughly at the bridge,
+    # not crown-of-head. Gordon et al., ANSUR II (2012) puts the
+    # nose-to-crown segment at ~6-8% of stature; we apply 1.07 as a
+    # mid-range estimate. Replace with a measured-from-pose head-top
+    # landmark when MediaPipe Pose 33-keypoint set lands.
     HEAD_CORRECTION_FACTOR = 1.07
+
+    # Sanity bounds on the pixels-per-centimetre output. Below ~0.5
+    # px/cm a 100cm waist would be 50 pixels (impossible to measure
+    # reliably); above ~60 px/cm a 1cm change is 60px which is past
+    # the resolution of our silhouette-edge detector. Outside these
+    # bounds calibration is wrong and downstream measurements will
+    # silently lie. (FS-NIDLO-CV-01)
+    MIN_PX_PER_CM = 0.5
+    MAX_PX_PER_CM = 60.0
 
     def calibrate_from_height(self, pose: BodyPose, height_cm: float) -> ScaleFactor:
         """Use user's stated height to compute pixels_per_cm."""
@@ -38,6 +52,18 @@ class ScaleCalibrator:
             for name in self.FOOT_LANDMARKS
             if name in pose.keypoints
         )
+        # Inverted poses (head below feet, e.g. someone photographed
+        # while doing a handstand or with a camera flipped 180°) make
+        # foot_y < head_y so pixel_height goes negative. The < 50
+        # check below would catch large negatives but a small
+        # negative would slip through and produce a NEGATIVE
+        # pixels_per_cm that downstream silhouette math then turns
+        # into nonsense. Reject explicitly. (FS-NIDLO-CV-01)
+        if foot_y <= head_y:
+            raise ScaleCalibrationError(
+                "Pose appears inverted — feet detected above the head. "
+                "Re-take with the camera upright."
+            )
         pixel_height = (foot_y - head_y) * self.HEAD_CORRECTION_FACTOR
         if pixel_height < 50:
             raise ScaleCalibrationError(
@@ -45,6 +71,12 @@ class ScaleCalibrator:
                 "image too small or pose incomplete."
             )
         px_per_cm = pixel_height / height_cm
+        if not (self.MIN_PX_PER_CM <= px_per_cm <= self.MAX_PX_PER_CM):
+            raise ScaleCalibrationError(
+                f"Computed scale {px_per_cm:.2f} px/cm is outside the "
+                f"sanity range [{self.MIN_PX_PER_CM}, {self.MAX_PX_PER_CM}]. "
+                "Likely image-resolution mismatch with the stated height."
+            )
         logger.info(
             f"Scale: {px_per_cm:.2f} px/cm (pixel height: {pixel_height:.0f}px)"
         )

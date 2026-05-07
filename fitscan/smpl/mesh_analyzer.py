@@ -17,7 +17,35 @@ from fitscan.domain.models import BodyMeasurements, ScaleFactor, SingleMeasureme
 class MeshAnalyzer:
     """Extracts body measurements from a trimesh.Trimesh SMPL mesh."""
 
-    CIRCUMFERENCE_HEIGHTS = {
+    # Anthropometric landmark heights (fraction of stature). Bust and
+    # chest sit at slightly different y-levels per gender — the female
+    # bust line is anatomically below the male chest line. Using a
+    # single 0.78 ratio for both made gendered orders measure
+    # systematically inconsistent. Values from a fashion-industry
+    # tailoring reference; revisit alongside FS-NIDLO-TEST-01 when
+    # ground-truth fixtures land. (FS-NIDLO-SMPL-07)
+    #
+    # `unisex` keeps the legacy 0.78 mid-point so previously-collected
+    # data isn't retroactively shifted.
+    _CIRCUMFERENCE_HEIGHTS_LADIES = {
+        "neck": 0.920,
+        "bust": 0.760,
+        "chest": 0.780,  # used for gender-agnostic upper-torso fall-back
+        "under_breast": 0.740,
+        "waist": 0.635,
+        "hip": 0.525,
+        "thigh": 0.445,
+    }
+    _CIRCUMFERENCE_HEIGHTS_GENTS = {
+        "neck": 0.920,
+        "bust": 0.780,  # rarely used on a gents profile but kept for completeness
+        "chest": 0.800,
+        "under_breast": 0.740,
+        "waist": 0.635,
+        "hip": 0.525,
+        "thigh": 0.445,
+    }
+    _CIRCUMFERENCE_HEIGHTS_UNISEX = {
         "neck": 0.920,
         "bust": 0.780,
         "chest": 0.780,
@@ -26,6 +54,18 @@ class MeshAnalyzer:
         "hip": 0.525,
         "thigh": 0.445,
     }
+    # Public alias for back-compat — defaults to ladies (the project's
+    # primary audience). Callers that want gendered behaviour should
+    # rely on `_circumference_heights_for(gender_profile)` below.
+    CIRCUMFERENCE_HEIGHTS = _CIRCUMFERENCE_HEIGHTS_LADIES
+
+    @classmethod
+    def _circumference_heights_for(cls, gender_profile: str) -> dict[str, float]:
+        if gender_profile == "ladies":
+            return cls._CIRCUMFERENCE_HEIGHTS_LADIES
+        if gender_profile == "gents" or gender_profile == "mens":
+            return cls._CIRCUMFERENCE_HEIGHTS_GENTS
+        return cls._CIRCUMFERENCE_HEIGHTS_UNISEX
 
     ARM_HEIGHT_RATIOS = {
         "around_arm": 0.810,
@@ -64,11 +104,15 @@ class MeshAnalyzer:
         smpl_height_cm = y_range * m_to_cm
         height_correction = 1.0
 
+        # Per-gender circumference heights (FS-NIDLO-SMPL-07): bust and
+        # chest sit at different y-levels by anatomy.
+        circumference_heights = self._circumference_heights_for(gender_profile)
+
         def y_at(landmark: str) -> float:
             return y_min + self.LANDMARK_HEIGHTS[landmark] * y_range
 
         def circ(level: str, conf: float = 0.88) -> Optional[SingleMeasurement]:
-            rel_h = self.CIRCUMFERENCE_HEIGHTS.get(level)
+            rel_h = circumference_heights.get(level)
             if rel_h is None:
                 return None
             y_cut = y_min + rel_h * y_range
@@ -183,16 +227,14 @@ class MeshAnalyzer:
             kaba_length_cm=(kaba_len if gender_profile == "ladies" else None),
             skirt_length_cm=(skirt_len if gender_profile == "ladies" else None),
             dress_length_cm=(dress_len if gender_profile == "ladies" else None),
-            slit_length_cm=(
-                SingleMeasurement(40.0, 0.40, "default")
-                if gender_profile == "ladies"
-                else None
-            ),
-            cape_cm=(
-                SingleMeasurement(60.0, 0.40, "default")
-                if gender_profile == "ladies"
-                else None
-            ),
+            # Slit and cape are designer-elective on top of the body
+            # measurement — never derivable from the mesh alone. Surfacing
+            # the old `(40.0, 0.40, "default")` placeholders made the
+            # frontend display them as if they were measured. Now null;
+            # the order flow / designer UI prompts for these as ease,
+            # not as auto-measurements. (FS-NIDLO-SMPL-08)
+            slit_length_cm=None,
+            cape_cm=None,
             gender_profile=gender_profile,
             source="smpl",
         )

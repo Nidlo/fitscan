@@ -65,11 +65,34 @@ class SilhouetteMeasurer:
             if y_px is None:
                 continue
             y = int(np.clip(y_px, 0, mask.shape[0] - 1))
-            row = mask[y, :]
+            width = self._width_at_row(mask, y)
+            if width is not None:
+                widths[name] = width
+        return widths
+
+    def _width_at_row(
+        self, mask: np.ndarray, y: int, half_window: int = 5
+    ) -> float | None:
+        """Sample silhouette width at row `y` and return the median over
+        `2*half_window+1` rows centred on it. Single-row scans overshoot
+        by 5-20px on hair/cloth-fold noise; the median collapses those
+        spikes without dragging the value off real anatomy because the
+        surrounding rows have the right width. Falls back to single-row
+        when the window doesn't fit (top/bottom of frame, very short
+        masks). (FS-NIDLO-CV-02)
+        """
+        h = mask.shape[0]
+        y0 = max(0, y - half_window)
+        y1 = min(h, y + half_window + 1)
+        sample_widths: list[float] = []
+        for row_y in range(y0, y1):
+            row = mask[row_y, :]
             nonzero = np.where(row > 127)[0]
             if len(nonzero) >= 2:
-                widths[name] = float(nonzero[-1] - nonzero[0])
-        return widths
+                sample_widths.append(float(nonzero[-1] - nonzero[0]))
+        if not sample_widths:
+            return None
+        return float(np.median(sample_widths))
 
     def _get_y_between(
         self, pose: BodyPose, lm1: str, lm2: str, ratio: float = 0.5

@@ -168,3 +168,43 @@ class TestPipelineOrchestrator:
         pipeline = self._make_pipeline(enable_smpl=True)
         result = pipeline.run(tmp_path / "test.jpg", height_cm=170.0)
         assert result is not None
+
+    def test_validators_disagree_surfaces_in_degraded_modes(self, tmp_path):
+        """FS-NIDLO-VALID-03 — when rule + Claude disagree on is_valid,
+        the merged ValidationResult sets `degraded_modes=['validators_disagree']`
+        and the PipelineResult forwards it to the response payload.
+        Frontend renders a "manual review recommended" badge off this.
+        """
+
+        class DisagreeingClaude:
+            def validate(self, image, measurements, subject_id=None):
+                return ValidationResult(
+                    is_valid=False,  # Claude says NO; rule mock says YES
+                    flagged_fields=[],
+                    photo_quality_score=4.0,
+                    quality_issues=["bad_lighting"],
+                    recommendation="retake",
+                    raw_response="claude_disagree",
+                )
+
+            def verify_landmarks(self, image, occluded, subject_id=None):
+                from fitscan.domain.models import LandmarkVerification
+
+                return LandmarkVerification(verdicts={}, raw_response="")
+
+        pipeline = self._make_pipeline(
+            enable_claude=True,
+            claude_validator=DisagreeingClaude(),
+        )
+        result = pipeline.run_with_mesh(tmp_path / "test.jpg", height_cm=170.0)
+
+        assert "validators_disagree" in result.degraded_modes
+
+    def test_validators_agree_emits_empty_degraded_modes(self, tmp_path):
+        """The flip side: when both validators agree on is_valid, no
+        degradation flag fires. Pinning the empty default so an
+        accidentally-always-True helper can't slip through review."""
+        pipeline = self._make_pipeline(enable_claude=True)
+        result = pipeline.run_with_mesh(tmp_path / "test.jpg", height_cm=170.0)
+
+        assert result.degraded_modes == []

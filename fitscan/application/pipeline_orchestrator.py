@@ -5,7 +5,7 @@ Follows the dependency injection pattern — all dependencies injected.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +44,10 @@ class PipelineResult:
     thetas: list[float] | None = None
     landmark_verification: LandmarkVerification | None = None
     pose: BodyPose | None = None
+    # FS-NIDLO-VALID-03 — Surface `ValidationResult.degraded_modes`
+    # at the pipeline boundary so the API response can carry it.
+    # Empty list when nothing degraded.
+    degraded_modes: list[str] = field(default_factory=list)
 
 
 class PipelineOrchestrator:
@@ -210,6 +214,7 @@ class PipelineOrchestrator:
             mesh=mesh,
             landmark_verification=landmark_verification,
             pose=pose,
+            degraded_modes=list(validation.degraded_modes),
         )
 
     @staticmethod
@@ -240,6 +245,16 @@ class PipelineOrchestrator:
             if "retake" in [rule.recommendation, claude.recommendation]
             else "proceed"
         )
+        # FS-NIDLO-VALID-03 — when rule + Claude disagree on overall
+        # is_valid, surface a structured signal so the frontend can
+        # render a "manual review recommended" badge. The merged
+        # `is_valid` still reflects the combined flagged-fields count
+        # (the historical contract); `degraded_modes` is additive
+        # information operators can route on without changing the
+        # accept/reject decision.
+        degraded: list[str] = []
+        if rule.is_valid != claude.is_valid:
+            degraded.append("validators_disagree")
         return ValidationResult(
             is_valid=len(flagged) <= 1,
             flagged_fields=flagged,
@@ -247,4 +262,5 @@ class PipelineOrchestrator:
             quality_issues=issues,
             recommendation=recommend,
             raw_response=(f"rule: {rule.raw_response} | claude: {claude.raw_response}"),
+            degraded_modes=degraded,
         )
