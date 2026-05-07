@@ -90,6 +90,8 @@ class PipelineOrchestrator:
         reference_object_cm: float | None = None,
         gender_profile: str = "ladies",
         subject_id: str | None = None,
+        enable_smpl: bool | None = None,
+        enable_claude: bool | None = None,
     ) -> BodyMeasurements:
         return self.run_with_mesh(
             image_path=image_path,
@@ -97,6 +99,8 @@ class PipelineOrchestrator:
             reference_object_cm=reference_object_cm,
             gender_profile=gender_profile,
             subject_id=subject_id,
+            enable_smpl=enable_smpl,
+            enable_claude=enable_claude,
         ).measurements
 
     def run_with_mesh(
@@ -106,11 +110,24 @@ class PipelineOrchestrator:
         reference_object_cm: float | None = None,
         gender_profile: str = "ladies",
         subject_id: str | None = None,
+        enable_smpl: bool | None = None,
+        enable_claude: bool | None = None,
     ) -> PipelineResult:
         """Like `run()` but also surfaces the SMPL mesh + parameters when
         available. Used by `/measure/avatar` to render the GLB without
         re-running the pipeline.
+
+        `enable_smpl` and `enable_claude` are per-call overrides. None
+        falls back to the orchestrator-level defaults set at construction
+        time. The pipeline is `lru_cache(maxsize=1)`-singleton per worker
+        so we can't toggle the flags by rebuilding it; per-call overrides
+        let `/measure/measurements` honour the form fields without
+        invalidating the cache. (FS-NIDLO-MEAS-05)
         """
+        # Resolve per-call overrides; None = use orchestrator default.
+        smpl_on = self._enable_smpl if enable_smpl is None else enable_smpl
+        claude_on = self._enable_claude if enable_claude is None else enable_claude
+
         logger.info(f"Processing {image_path}")
         image = self._loader.load(image_path)
         ok, reason = self._loader.validate_quality(image)
@@ -125,7 +142,7 @@ class PipelineOrchestrator:
         # subject_id (audit FS-C3); skipped silently when Claude is off
         # or no landmarks are occluded.
         landmark_verification: LandmarkVerification | None = None
-        if self._enable_claude:
+        if claude_on:
             occluded = PoseDetector.find_occluded_landmarks(pose)
             if occluded:
                 try:
@@ -157,7 +174,7 @@ class PipelineOrchestrator:
         sources.append(silhouette_result)
 
         mesh: Any | None = None
-        if self._enable_smpl:
+        if smpl_on:
             try:
                 raw_mesh = self._fitter.fit(processed.original, pose)
                 mesh = self._rescale_mesh_to_height(raw_mesh, scale)
@@ -171,7 +188,7 @@ class PipelineOrchestrator:
 
         rule_result = self._rule_validator.validate(image, fused)
 
-        if self._enable_claude:
+        if claude_on:
             try:
                 # Body photo is shipped to Anthropic only when subject_id is
                 # supplied (explicit consent). Without it the validator no-ops

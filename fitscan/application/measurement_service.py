@@ -65,16 +65,22 @@ class MeasurementService:
         reference_object_cm: float | None = None,
         gender_profile: str = "ladies",
         subject_id: str | None = None,
+        enable_smpl: bool | None = None,
+        enable_claude: bool | None = None,
     ) -> dict:
         # Use run_with_mesh so the layered-AI landmark verification (S5)
         # surfaces in the response payload alongside measurements. The
         # mesh result is discarded — callers needing it use measure_with_mesh.
+        # `enable_*=None` lets the orchestrator's construction-time
+        # defaults stand; concrete True/False is a per-call override.
         result = self._pipeline.run_with_mesh(
             Path(image_path),
             height_cm=height_cm,
             reference_object_cm=reference_object_cm,
             gender_profile=gender_profile,
             subject_id=subject_id,
+            enable_smpl=enable_smpl,
+            enable_claude=enable_claude,
         )
         out = result.measurements.to_dict()
         if result.landmark_verification is not None and result.landmark_verification.verdicts:
@@ -109,6 +115,8 @@ class MeasurementService:
         reference_object_cm: float | None = None,
         gender_profile: str = "ladies",
         subject_id: str | None = None,
+        enable_smpl: bool | None = None,
+        enable_claude: bool | None = None,
     ) -> tuple[Any, Any | None, list[float], list[float]]:
         """Measurements + the fitted SMPL mesh.
 
@@ -123,6 +131,8 @@ class MeasurementService:
             reference_object_cm=reference_object_cm,
             gender_profile=gender_profile,
             subject_id=subject_id,
+            enable_smpl=enable_smpl,
+            enable_claude=enable_claude,
         )
         return (
             result.measurements,

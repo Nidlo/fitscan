@@ -18,6 +18,8 @@ try:
 except ImportError:  # Pillow is a dep but defend against import-time issues
     pass
 
+from fitscan.config import get_settings
+
 from .admin_routes import router as admin_router
 from .routes import router
 
@@ -26,9 +28,14 @@ app = FastAPI(
     description="AI-powered body measurement from photographs",
     version="0.1.0",
 )
+# FS-NIDLO-MEAS-03 — CORS allowlist driven from `Settings.cors_origins`
+# (defaults to the Laravel backend host only). Set
+# `FITSCAN_CORS_ORIGINS=*` in dev if you need to hit the API from
+# arbitrary tools; production must keep a finite list.
+_settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_settings.cors_origin_list,
     allow_methods=["*"],
     allow_headers=["*"],
 )

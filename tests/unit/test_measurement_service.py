@@ -41,6 +41,11 @@ class TestMeasurementService:
             reference_object_cm=None,
             gender_profile="ladies",
             subject_id=None,
+            # enable_*=None — per-call override falls back to the
+            # orchestrator-level defaults set at construction time.
+            # (FS-NIDLO-MEAS-05)
+            enable_smpl=None,
+            enable_claude=None,
         )
         assert isinstance(result, dict)
         assert result["source"] == "geometric"
@@ -65,7 +70,26 @@ class TestMeasurementService:
             reference_object_cm=21.0,
             gender_profile="mens",
             subject_id="user-abc",
+            enable_smpl=None,
+            enable_claude=None,
         )
+
+    def test_measure_forwards_enable_smpl_and_enable_claude_overrides(self):
+        # FS-NIDLO-MEAS-05 — `/measure/measurements` exposes enable_smpl
+        # and enable_claude form fields. They were silently dropped
+        # before; this test pins the wiring so a future refactor can't
+        # quietly stop honouring them.
+        mock_pipeline = MagicMock()
+        mock_pipeline.run_with_mesh.return_value = PipelineResult(
+            measurements=make_measurements()
+        )
+
+        svc = MeasurementService(pipeline=mock_pipeline)
+        svc.measure("/tmp/img.jpg", enable_smpl=False, enable_claude=False)
+
+        kwargs = mock_pipeline.run_with_mesh.call_args.kwargs
+        assert kwargs["enable_smpl"] is False
+        assert kwargs["enable_claude"] is False
 
     def test_measure_result_includes_measurement_values(self):
         mock_pipeline = MagicMock()

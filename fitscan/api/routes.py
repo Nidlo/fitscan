@@ -6,6 +6,7 @@ import hashlib
 import os
 import secrets
 import tempfile
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -16,14 +17,32 @@ from sqlalchemy.orm import Session
 from .dependencies import get_measurement_service, verify_api_key
 from .schemas import MeasurementsResponse, OverrideResponse
 
-# S-13 — what we surface to clients on a pipeline blow-up. Raw exception
-# strings would leak file paths, library versions, and SQL detail; a
-# stable category sentinel keeps debugging via the structured `logger`
-# while the response stays generic.
+# S-13 / FS-NIDLO-MEAS-04 — `safe_500` shape: clients see a generic
+# message + a `trace_id` they can quote when they file a bug; the full
+# exception lands in the structured log keyed against the same
+# `trace_id`. Operators can grep one ID and see the whole stack.
 _PIPELINE_FAILED_MESSAGE = (
     "Measurement pipeline failed. The error has been recorded; "
     "please retry, or fall back to manual entry."
 )
+
+
+def _safe_500(probe: str, exc: BaseException) -> HTTPException:
+    """Build a 500 with `{detail, trace_id}` and emit the matching log
+    line. Pipeline catch blocks call this instead of raising directly so
+    the response shape stays uniform and the trace_id correlation always
+    fires. (FS-NIDLO-MEAS-04)
+    """
+    trace_id = uuid.uuid4().hex
+    logger.opt(exception=exc).error(
+        "fitscan_500 probe={probe} trace_id={trace_id}",
+        probe=probe,
+        trace_id=trace_id,
+    )
+    return HTTPException(
+        status_code=500,
+        detail={"message": _PIPELINE_FAILED_MESSAGE, "trace_id": trace_id},
+    )
 
 # Reusable dependency list for routes that require API-key auth.
 _auth = [Depends(verify_api_key)]
@@ -60,20 +79,25 @@ def _resolve_inside_avatars_root(stored_path: str | None) -> Path:
     return candidate
 
 
-async def _stream_to_tempfile(image: UploadFile) -> Path:
+def _stream_to_tempfile(image: UploadFile) -> Path:
     """Stream an UploadFile to disk in chunks, aborting at the size cap.
 
-    `await image.read()` (no arg) buffers the entire body into memory before
+    `image.read()` (no arg) buffers the entire body into memory before
     any size check fires; a 5GB upload OOMs the process before
-    ImageLoader.MAX_FILE_SIZE_MB is consulted (audit FS-C4). Streaming with
-    a running total fails fast.
+    ImageLoader.MAX_FILE_SIZE_MB is consulted (audit FS-C4). Streaming
+    with a running total fails fast.
+
+    Sync as of FS-NIDLO-MEAS-18 — the `/measure*` routes are now sync
+    so FastAPI hands the whole handler to its threadpool, unblocking
+    the event loop while PyTorch/MediaPipe runs. UploadFile.file is
+    the underlying SpooledTemporaryFile and has a sync `read()`.
     """
     chunk_size = 64 * 1024
     total = 0
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
         try:
             while True:
-                chunk = await image.read(chunk_size)
+                chunk = image.file.read(chunk_size)
                 if not chunk:
                     break
                 total += len(chunk)
@@ -98,7 +122,7 @@ router = APIRouter(prefix="/api/v1", tags=["measurements"])
 
 
 @router.post("/measure", response_model=MeasurementsResponse, dependencies=_auth)
-async def measure_body(
+def measure_body(
     image: UploadFile = File(..., description="Person photo (JPEG/PNG, min 720p)"),
     height_cm: float | None = Form(None),
     reference_object_cm: float | None = Form(None),
@@ -135,7 +159,7 @@ async def measure_body(
                 400,
                 "Provide either height_cm or reference_object_cm.",
             )
-        tmp_path = await _stream_to_tempfile(image)
+        tmp_path = _stream_to_tempfile(image)
         try:
             result = service.measure(
                 image_path=tmp_path,
@@ -143,18 +167,16 @@ async def measure_body(
                 reference_object_cm=reference_object_cm,
                 gender_profile=gender_profile,
                 subject_id=subject_id,
+                enable_smpl=enable_smpl,
+                enable_claude=enable_claude,
             )
             return MeasurementsResponse(status="success", **result)
         except HTTPException:
             error_kind = error_kind or "pipeline"
             raise
-        except Exception:
-            # S-13 — log the full exception server-side; respond with a
-            # category-bucketed message so vendor / library detail can't
-            # leak via the HTTP body.
+        except Exception as e:
             error_kind = "pipeline"
-            logger.exception("/measure pipeline failed")
-            raise HTTPException(500, _PIPELINE_FAILED_MESSAGE)
+            raise _safe_500("measure", e) from e
         finally:
             tmp_path.unlink(missing_ok=True)
     finally:
@@ -260,18 +282,26 @@ async def override_measurements(
 
 # ── SaaS API Key Management ─────────────────────────────────────────
 
-# Tier → monthly request quota. Single source of truth — both the
-# allowlist used for input validation and the limit used in the DB row
-# come from this dict, so they can't drift apart.
-_TIER_LIMITS: dict[str, int] = {
-    "free": 50,
-    "pro": 1000,
-    "enterprise": 999999,
-}
+
+def _tier_limits() -> dict[str, int]:
+    """Tier → monthly request quota, sourced from `Settings`. Single
+    source of truth — both the allowlist used for input validation and
+    the limit written to the DB row come from this map. Operators can
+    raise free-tier limits etc. via env without a code edit.
+    (FS-NIDLO-AUTH-05)
+    """
+    from fitscan.config import get_settings
+
+    s = get_settings()
+    return {
+        "free": s.free_tier_monthly_limit,
+        "pro": s.pro_tier_monthly_limit,
+        "enterprise": s.enterprise_tier_monthly_limit,
+    }
 
 
 @router.post("/keys/register", tags=["SaaS"])
-async def register_api_key(
+def register_api_key(
     request: Request,
     owner_name: str = Form(...),
     owner_email: str = Form(...),
@@ -290,13 +320,14 @@ async def register_api_key(
     """
     from fitscan.infrastructure.result_store import APIKeyRecord, engine
 
-    if tier not in _TIER_LIMITS:
+    tier_limits = _tier_limits()
+    if tier not in tier_limits:
         raise HTTPException(
             400,
-            f"Unknown tier '{tier}'. Allowed: {', '.join(sorted(_TIER_LIMITS))}.",
+            f"Unknown tier '{tier}'. Allowed: {', '.join(sorted(tier_limits))}.",
         )
 
-    monthly_limit = _TIER_LIMITS[tier]
+    monthly_limit = tier_limits[tier]
     raw_key = f"fsk_{secrets.token_hex(24)}"
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
 
@@ -340,7 +371,7 @@ async def register_api_key(
     description="Faster than /measure. Returns only the 24-field measurement JSON. No GLB is generated.",
     dependencies=_auth,
 )
-async def measure_measurements_only(
+def measure_measurements_only(
     image: UploadFile = File(...),
     height_cm: float | None = Form(None),
     reference_object_cm: float | None = Form(None),
@@ -350,26 +381,32 @@ async def measure_measurements_only(
     subject_id: str | None = Form(None),
     service=Depends(get_measurement_service),
 ):
-    """Measurements only — skips avatar generation entirely."""
+    """Measurements only — skips avatar generation entirely.
+
+    `gender_profile`, `enable_smpl`, and `enable_claude` are now wired
+    through to the pipeline (FS-NIDLO-MEAS-05). Previously they were
+    accepted as form fields but silently dropped on this route.
+    """
     if not height_cm and not reference_object_cm:
         raise HTTPException(400, "Provide height_cm or reference_object_cm.")
-    tmp_path = await _stream_to_tempfile(image)
+    tmp_path = _stream_to_tempfile(image)
     try:
         result = service.measure(
             image_path=tmp_path,
             height_cm=height_cm,
             reference_object_cm=reference_object_cm,
+            gender_profile=gender_profile,
             subject_id=subject_id,
+            enable_smpl=enable_smpl,
+            enable_claude=enable_claude,
         )
         response = MeasurementsResponse(status="success", **result)
         response.avatar_id = None  # explicitly None — no avatar generated
         return response
     except HTTPException:
         raise
-    except Exception:
-        # S-13 — log full exception, surface a stable category sentinel.
-        logger.exception("/measure/measurements pipeline failed")
-        raise HTTPException(500, _PIPELINE_FAILED_MESSAGE)
+    except Exception as e:
+        raise _safe_500("measure_measurements", e) from e
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -381,7 +418,7 @@ async def measure_measurements_only(
     description="Returns the raw GLB binary. Response Content-Type is model/gltf-binary. No measurements JSON.",
     dependencies=_auth,
 )
-async def measure_avatar_only(
+def measure_avatar_only(
     image: UploadFile = File(...),
     height_cm: float | None = Form(None),
     reference_object_cm: float | None = Form(None),
@@ -397,7 +434,7 @@ async def measure_avatar_only(
     if not height_cm and not reference_object_cm:
         raise HTTPException(400, "Provide height_cm or reference_object_cm.")
 
-    tmp_path = await _stream_to_tempfile(image)
+    tmp_path = _stream_to_tempfile(image)
     content = tmp_path.read_bytes()
 
     try:
@@ -412,7 +449,6 @@ async def measure_avatar_only(
             raise HTTPException(500, "3D mesh generation failed.")
 
         from fitscan.avatar.generator import AvatarGenerator
-        import uuid
 
         source_img = cv2.cvtColor(
             cv2.imdecode(np.frombuffer(content, np.uint8), cv2.IMREAD_COLOR),
@@ -445,9 +481,7 @@ async def measure_avatar_only(
         )
     except HTTPException:
         raise
-    except Exception:
-        # S-13 — log full exception, surface a stable category sentinel.
-        logger.exception("/measure/avatar pipeline failed")
-        raise HTTPException(500, _PIPELINE_FAILED_MESSAGE)
+    except Exception as e:
+        raise _safe_500("measure_avatar", e) from e
     finally:
         tmp_path.unlink(missing_ok=True)

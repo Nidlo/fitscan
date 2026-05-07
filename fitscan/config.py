@@ -54,6 +54,23 @@ class Settings(BaseSettings):
     # SaaS
     free_tier_monthly_limit: int = 50
     pro_tier_monthly_limit: int = 1000
+    enterprise_tier_monthly_limit: int = 999_999
+
+    # CORS — comma-separated list of allowed origins for the API.
+    # Default to the Laravel backend host only. Wildcard `*` is opt-in
+    # for development; production must keep a finite allowlist.
+    # (FS-NIDLO-MEAS-03)
+    cors_origins: str = "http://localhost:8000"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """Parse `cors_origins` into the list FastAPI's CORSMiddleware
+        wants. Empty values stripped; `*` left intact for dev."""
+        return [
+            origin.strip()
+            for origin in self.cors_origins.split(",")
+            if origin.strip()
+        ]
 
     @property
     def is_test(self) -> bool:
