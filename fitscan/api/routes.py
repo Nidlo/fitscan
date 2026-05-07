@@ -10,10 +10,20 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from .dependencies import get_measurement_service, verify_api_key
 from .schemas import MeasurementsResponse, OverrideResponse
+
+# S-13 — what we surface to clients on a pipeline blow-up. Raw exception
+# strings would leak file paths, library versions, and SQL detail; a
+# stable category sentinel keeps debugging via the structured `logger`
+# while the response stays generic.
+_PIPELINE_FAILED_MESSAGE = (
+    "Measurement pipeline failed. The error has been recorded; "
+    "please retry, or fall back to manual entry."
+)
 
 # Reusable dependency list for routes that require API-key auth.
 _auth = [Depends(verify_api_key)]
@@ -106,27 +116,55 @@ async def measure_body(
     ),
     service=Depends(get_measurement_service),
 ):
-    if not image.content_type or not image.content_type.startswith("image/"):
-        raise HTTPException(400, "File must be an image.")
-    if height_cm is None and reference_object_cm is None:
-        raise HTTPException(
-            400,
-            "Provide either height_cm or reference_object_cm.",
-        )
-    tmp_path = await _stream_to_tempfile(image)
+    # Telemetry import lives here so the route only pays the cost when a
+    # call lands — keeps measurement_runs isolated from cold-start probes.
+    from datetime import datetime, timezone
+
+    from fitscan.infrastructure.result_store import record_measurement_run
+
+    started_at = datetime.now(timezone.utc)
+    error_kind: str | None = None
+
     try:
-        result = service.measure(
-            image_path=tmp_path,
-            height_cm=height_cm,
-            reference_object_cm=reference_object_cm,
-            gender_profile=gender_profile,
-            subject_id=subject_id,
-        )
-        return MeasurementsResponse(status="success", **result)
-    except Exception as e:
-        raise HTTPException(500, str(e))
+        if not image.content_type or not image.content_type.startswith("image/"):
+            error_kind = "validation"
+            raise HTTPException(400, "File must be an image.")
+        if height_cm is None and reference_object_cm is None:
+            error_kind = "validation"
+            raise HTTPException(
+                400,
+                "Provide either height_cm or reference_object_cm.",
+            )
+        tmp_path = await _stream_to_tempfile(image)
+        try:
+            result = service.measure(
+                image_path=tmp_path,
+                height_cm=height_cm,
+                reference_object_cm=reference_object_cm,
+                gender_profile=gender_profile,
+                subject_id=subject_id,
+            )
+            return MeasurementsResponse(status="success", **result)
+        except HTTPException:
+            error_kind = error_kind or "pipeline"
+            raise
+        except Exception:
+            # S-13 — log the full exception server-side; respond with a
+            # category-bucketed message so vendor / library detail can't
+            # leak via the HTTP body.
+            error_kind = "pipeline"
+            logger.exception("/measure pipeline failed")
+            raise HTTPException(500, _PIPELINE_FAILED_MESSAGE)
+        finally:
+            tmp_path.unlink(missing_ok=True)
     finally:
-        tmp_path.unlink(missing_ok=True)
+        completed_at = datetime.now(timezone.utc)
+        record_measurement_run(
+            started_at=started_at,
+            completed_at=completed_at,
+            success=error_kind is None,
+            error_kind=error_kind,
+        )
 
 
 @router.get("/health")
@@ -287,8 +325,12 @@ async def measure_measurements_only(
         response = MeasurementsResponse(status="success", **result)
         response.avatar_id = None  # explicitly None — no avatar generated
         return response
-    except Exception as e:
-        raise HTTPException(500, str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        # S-13 — log full exception, surface a stable category sentinel.
+        logger.exception("/measure/measurements pipeline failed")
+        raise HTTPException(500, _PIPELINE_FAILED_MESSAGE)
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -362,7 +404,11 @@ async def measure_avatar_only(
                 "Content-Disposition": "attachment; filename=avatar.glb",
             },
         )
-    except Exception as e:
-        raise HTTPException(500, str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        # S-13 — log full exception, surface a stable category sentinel.
+        logger.exception("/measure/avatar pipeline failed")
+        raise HTTPException(500, _PIPELINE_FAILED_MESSAGE)
     finally:
         tmp_path.unlink(missing_ok=True)
