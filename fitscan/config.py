@@ -62,6 +62,22 @@ class Settings(BaseSettings):
     # (FS-NIDLO-MEAS-03)
     cors_origins: str = "http://localhost:8000"
 
+    # Observability — Sentry DSN. When unset, the SDK initialises as a
+    # no-op so dev/test environments don't accidentally publish errors.
+    # `traces_sample_rate` controls performance-trace sampling.
+    # (FS-NIDLO-OPS-01)
+    sentry_dsn: str = ""
+    sentry_traces_sample_rate: float = 0.1
+
+    # Dedicated tempdir for streamed measurement uploads. Living under
+    # its own root (rather than the system /tmp) lets us sweep stale
+    # files on app startup without risking deleting unrelated tempfiles.
+    # Files older than `upload_tempdir_max_age_seconds` get cleaned at
+    # boot — covers the "uvicorn was hard-killed mid-request" leak
+    # path. (FS-NIDLO-OPS-03)
+    upload_tempdir: Path = Path("/tmp/fitscan_uploads")
+    upload_tempdir_max_age_seconds: int = 60 * 60  # 1 hour
+
     @property
     def cors_origin_list(self) -> list[str]:
         """Parse `cors_origins` into the list FastAPI's CORSMiddleware

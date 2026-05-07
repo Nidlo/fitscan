@@ -6,13 +6,27 @@ import hashlib
 import os
 import secrets
 import tempfile
+import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
+import cv2
+import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from loguru import logger
 from sqlalchemy.orm import Session
+
+from fitscan.avatar.clothing_fitter import ClothingFitter
+from fitscan.avatar.generator import AvatarGenerator
+from fitscan.config import get_settings
+from fitscan.infrastructure.result_store import (
+    APIKeyRecord,
+    AvatarStore,
+    engine,
+    record_measurement_run,
+)
 
 from .dependencies import get_measurement_service, verify_api_key
 from .schemas import MeasurementsResponse, OverrideResponse
@@ -79,6 +93,15 @@ def _resolve_inside_avatars_root(stored_path: str | None) -> Path:
     return candidate
 
 
+def _upload_tempdir() -> Path:
+    """Resolve the upload tempdir from Settings, creating it if missing.
+    Centralised so the app-startup sweep and `_stream_to_tempfile`
+    agree on the same path. (FS-NIDLO-OPS-03)"""
+    target = Path(get_settings().upload_tempdir)
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
 def _stream_to_tempfile(image: UploadFile) -> Path:
     """Stream an UploadFile to disk in chunks, aborting at the size cap.
 
@@ -91,10 +114,16 @@ def _stream_to_tempfile(image: UploadFile) -> Path:
     so FastAPI hands the whole handler to its threadpool, unblocking
     the event loop while PyTorch/MediaPipe runs. UploadFile.file is
     the underlying SpooledTemporaryFile and has a sync `read()`.
+
+    Files land in `Settings.upload_tempdir` (default
+    `/tmp/fitscan_uploads/`) so the boot-time sweep can clean
+    leftovers from a prior hard-killed worker. (FS-NIDLO-OPS-03)
     """
     chunk_size = 64 * 1024
     total = 0
-    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(
+        suffix=".jpg", delete=False, dir=str(_upload_tempdir())
+    ) as tmp:
         try:
             while True:
                 chunk = image.file.read(chunk_size)
@@ -116,6 +145,34 @@ def _stream_to_tempfile(image: UploadFile) -> Path:
             Path(tmp.name).unlink(missing_ok=True)
             raise
         return Path(tmp.name)
+
+
+def sweep_upload_tempdir() -> int:
+    """Delete files in `Settings.upload_tempdir` older than
+    `upload_tempdir_max_age_seconds`. Called at app startup so a worker
+    that died mid-request (uvicorn SIGKILL, OOM) doesn't leave a
+    user-uploaded body photo lying around indefinitely. Returns the
+    number of files removed for the boot log. (FS-NIDLO-OPS-03)
+    """
+    settings = get_settings()
+    target = Path(settings.upload_tempdir)
+    if not target.exists():
+        return 0
+
+    cutoff = time.time() - settings.upload_tempdir_max_age_seconds
+    removed = 0
+    for entry in target.iterdir():
+        if not entry.is_file():
+            continue
+        try:
+            if entry.stat().st_mtime < cutoff:
+                entry.unlink(missing_ok=True)
+                removed += 1
+        except OSError as e:  # noqa: BLE001 — best-effort sweep
+            logger.warning(
+                "tempdir sweep skipped {entry}: {err}", entry=str(entry), err=str(e)
+            )
+    return removed
 
 
 router = APIRouter(prefix="/api/v1", tags=["measurements"])
@@ -140,12 +197,6 @@ def measure_body(
     ),
     service=Depends(get_measurement_service),
 ):
-    # Telemetry import lives here so the route only pays the cost when a
-    # call lands — keeps measurement_runs isolated from cold-start probes.
-    from datetime import datetime, timezone
-
-    from fitscan.infrastructure.result_store import record_measurement_run
-
     started_at = datetime.now(timezone.utc)
     error_kind: str | None = None
 
@@ -197,7 +248,6 @@ async def health():
 @router.get("/avatar/{avatar_id}/glb", dependencies=_auth)
 async def get_avatar_glb(avatar_id: str):
     """Stream the GLB file for a stored avatar."""
-    from fitscan.infrastructure.result_store import AvatarStore
 
     avatar = AvatarStore().get_avatar(avatar_id)
     if not avatar:
@@ -209,7 +259,6 @@ async def get_avatar_glb(avatar_id: str):
 @router.get("/avatar/{avatar_id}/thumbnail", dependencies=_auth)
 async def get_avatar_thumbnail(avatar_id: str):
     """Return a 512x512 PNG preview of the avatar."""
-    from fitscan.infrastructure.result_store import AvatarStore
 
     avatar = AvatarStore().get_avatar(avatar_id)
     if not avatar:
@@ -225,7 +274,6 @@ async def delete_avatar(avatar_id: str):
     Called by the upstream platform (Laravel backend) when a user requests
     deletion of their body-scan data, or by the periodic retention task.
     """
-    from fitscan.infrastructure.result_store import AvatarStore
 
     if not AvatarStore().delete(avatar_id):
         raise HTTPException(404, f"Avatar {avatar_id} not found.")
@@ -238,8 +286,6 @@ async def fit_garment(
     garment_type: str = Form(..., description="dress|blouse|kaba|skirt|trousers"),
 ):
     """Drape a virtual garment onto a stored avatar. Returns draped GLB."""
-    from fitscan.avatar.clothing_fitter import ClothingFitter
-    from fitscan.infrastructure.result_store import AvatarStore
 
     store = AvatarStore()
     avatar = store.get_avatar(avatar_id)
@@ -263,7 +309,6 @@ async def override_measurements(
     overrides: dict[str, float],
 ):
     """Accept manual measurement corrections via Inverse SMPL."""
-    from fitscan.infrastructure.result_store import AvatarStore
 
     store = AvatarStore()
     avatar = store.get_avatar(avatar_id)
@@ -290,7 +335,6 @@ def _tier_limits() -> dict[str, int]:
     raise free-tier limits etc. via env without a code edit.
     (FS-NIDLO-AUTH-05)
     """
-    from fitscan.config import get_settings
 
     s = get_settings()
     return {
@@ -318,7 +362,6 @@ def register_api_key(
     relying on this in production MUST front it with an Nginx allow-list
     or equivalent.
     """
-    from fitscan.infrastructure.result_store import APIKeyRecord, engine
 
     tier_limits = _tier_limits()
     if tier not in tier_limits:
@@ -427,10 +470,6 @@ def measure_avatar_only(
     service=Depends(get_measurement_service),
 ):
     """Avatar only — returns GLB file directly as binary response."""
-    from fastapi.responses import Response
-    import numpy as np
-    import cv2
-
     if not height_cm and not reference_object_cm:
         raise HTTPException(400, "Provide height_cm or reference_object_cm.")
 
@@ -448,16 +487,14 @@ def measure_avatar_only(
         if mesh is None:
             raise HTTPException(500, "3D mesh generation failed.")
 
-        from fitscan.avatar.generator import AvatarGenerator
 
         source_img = cv2.cvtColor(
             cv2.imdecode(np.frombuffer(content, np.uint8), cv2.IMREAD_COLOR),
             cv2.COLOR_BGR2RGB,
         )
         gen = AvatarGenerator()
-        import tempfile as tf
 
-        with tf.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory() as tmpdir:
             avatar = gen.generate(
                 mesh=mesh,
                 source_image=source_img,

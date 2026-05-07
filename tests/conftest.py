@@ -31,3 +31,18 @@ def enforce_test_env():
     assert "fitscan_test" in db_url or "sqlite" in db_url, (
         f"Tests must use fitscan_test database. Got: {db_url}"
     )
+
+
+@pytest.fixture(autouse=True)
+def _reset_anthropic_client_cache():
+    """The validator memoizes Anthropic clients per-key (FS-NIDLO-OPS-05);
+    that's a connection-pool optimisation in production but in tests
+    causes cross-test bleed when several tests reuse the same fake
+    api_key — the second test's monkeypatched `Anthropic` class never
+    runs because the first test's cached instance is returned. Clear
+    the lru_cache between tests."""
+    from fitscan.validation.claude_validator import _anthropic_client
+
+    _anthropic_client.cache_clear()
+    yield
+    _anthropic_client.cache_clear()

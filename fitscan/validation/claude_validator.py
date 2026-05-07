@@ -7,10 +7,37 @@ from __future__ import annotations
 
 import base64
 import json
+from functools import lru_cache
+from typing import Any
 
 import cv2
 import numpy as np
 from loguru import logger
+
+
+@lru_cache(maxsize=4)
+def _anthropic_client(api_key: str) -> Any:
+    """Memoize one Anthropic client per API key (FS-NIDLO-OPS-05).
+
+    Constructing `Anthropic(...)` per call (the previous shape) tore
+    down + rebuilt the underlying httpx connection pool every time,
+    measurably increasing tail latency under load. A module-level
+    `lru_cache` keyed on the API key keeps a stable client per key
+    (we only ever have one in practice; the cache size is room for
+    test fixtures that mint per-test keys).
+
+    NOTE — prompt caching: marking the static
+    `VALIDATION_PROMPT` / `LANDMARK_VERIFICATION_PROMPT` blocks with
+    `cache_control={"type": "ephemeral"}` was considered. It does not
+    help here: every call carries a unique user photo as the first
+    content block, which invalidates the cache boundary regardless
+    of what we mark on the text block. Revisit if we ever pre-bind
+    the rules into a `system=` parameter (Anthropic caches system
+    blocks independently).
+    """
+    from anthropic import Anthropic
+
+    return Anthropic(api_key=api_key)
 
 from fitscan.domain.models import (
     BodyMeasurements,
@@ -98,9 +125,7 @@ class ClaudeValidator:
             return self._default_result()
 
         try:
-            from anthropic import Anthropic
-
-            client = Anthropic(api_key=self._api_key)
+            client = _anthropic_client(self._api_key)
             img_b64 = self._encode_image(image)
             measurements_str = json.dumps(measurements.to_dict(), indent=2)
             response = client.messages.create(
@@ -171,9 +196,7 @@ class ClaudeValidator:
             return LandmarkVerification(verdicts={}, raw_response="")
 
         try:
-            from anthropic import Anthropic
-
-            client = Anthropic(api_key=self._api_key)
+            client = _anthropic_client(self._api_key)
             img_b64 = self._encode_image(image)
             response = client.messages.create(
                 model="claude-sonnet-4-6",

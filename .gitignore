@@ -12,6 +12,7 @@ dist/
 build/
 .coverage
 htmlcov/
+fitscan_build.log
 external/
 .mypy_cache/
 .ruff_cache/

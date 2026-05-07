@@ -16,7 +16,7 @@ ALEMBIC  := $(VENV)/bin/alembic
 BLACK    := $(VENV)/bin/black
 RUFF     := $(VENV)/bin/ruff
 MYPY     := $(VENV)/bin/mypy
-PORT     := 8008
+PORT     := 8000
 
 GREEN  := \033[0;32m
 YELLOW := \033[0;33m
