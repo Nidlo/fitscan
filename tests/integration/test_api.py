@@ -50,3 +50,34 @@ class TestKeyRegistration:
         assert data["api_key"].startswith("fsk_")
         assert data["tier"] == "free"
         assert data["monthly_limit"] == 50
+
+    def test_register_rejects_unknown_tier(self):
+        # Audit fix — previously any string passed for `tier` was stored
+        # verbatim while the dict lookup silently fell back to free's
+        # limit. The DB row then claimed "tier=enterprise" with a free
+        # quota. Now an unknown tier is a 400.
+        response = client.post(
+            "/api/v1/keys/register",
+            data={
+                "owner_name": "Test User",
+                "owner_email": "test@example.com",
+                "tier": "diamond",
+            },
+        )
+        assert response.status_code == 400
+        assert "Unknown tier" in response.json()["detail"]
+
+    def test_register_accepts_pro_and_enterprise(self):
+        for tier, limit in [("pro", 1000), ("enterprise", 999999)]:
+            response = client.post(
+                "/api/v1/keys/register",
+                data={
+                    "owner_name": "Test User",
+                    "owner_email": f"{tier}@example.com",
+                    "tier": tier,
+                },
+            )
+            assert response.status_code == 200, f"tier={tier} rejected"
+            data = response.json()
+            assert data["tier"] == tier
+            assert data["monthly_limit"] == limit

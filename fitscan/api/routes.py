@@ -8,7 +8,7 @@ import secrets
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from loguru import logger
 from sqlalchemy.orm import Session
@@ -260,19 +260,45 @@ async def override_measurements(
 
 # ── SaaS API Key Management ─────────────────────────────────────────
 
+# Tier → monthly request quota. Single source of truth — both the
+# allowlist used for input validation and the limit used in the DB row
+# come from this dict, so they can't drift apart.
+_TIER_LIMITS: dict[str, int] = {
+    "free": 50,
+    "pro": 1000,
+    "enterprise": 999999,
+}
+
 
 @router.post("/keys/register", tags=["SaaS"])
 async def register_api_key(
+    request: Request,
     owner_name: str = Form(...),
     owner_email: str = Form(...),
     tier: str = Form("free"),
 ):
-    """Register for a FitScan API key."""
+    """Register for a FitScan API key.
+
+    TODO(FS-NIDLO-AUTH-03): currently public. The lockdown trust model
+    is a pending Snad-decision (admin-only / trusted-network / CLI).
+    Until that lands, this endpoint is hardened with:
+      - tier allowlist (no arbitrary string accepted),
+      - audit log on every registration so abuse is visible,
+    but it remains rate-unlimited at the application layer. Operators
+    relying on this in production MUST front it with an Nginx allow-list
+    or equivalent.
+    """
     from fitscan.infrastructure.result_store import APIKeyRecord, engine
 
+    if tier not in _TIER_LIMITS:
+        raise HTTPException(
+            400,
+            f"Unknown tier '{tier}'. Allowed: {', '.join(sorted(_TIER_LIMITS))}.",
+        )
+
+    monthly_limit = _TIER_LIMITS[tier]
     raw_key = f"fsk_{secrets.token_hex(24)}"
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-    monthly_limit = {"free": 50, "pro": 1000, "enterprise": 999999}.get(tier, 50)
 
     with Session(engine) as session:
         record = APIKeyRecord(
@@ -284,6 +310,19 @@ async def register_api_key(
         )
         session.add(record)
         session.commit()
+
+    # Audit trail — every issued key gets a structured log line so abuse
+    # patterns (one IP issuing 50 keys/min, throwaway emails) surface in
+    # ops dashboards even without an application-layer rate limit. The
+    # raw key is NOT logged; only the SHA-256 prefix to correlate later.
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(
+        "api_key_issued tier={tier} owner_email={email} client_ip={ip} key_hash_prefix={prefix}",
+        tier=tier,
+        email=owner_email,
+        ip=client_ip,
+        prefix=key_hash[:12],
+    )
 
     return {
         "api_key": raw_key,
