@@ -24,6 +24,7 @@ from fitscan.config import get_settings
 
 from .admin_routes import router as admin_router
 from .routes import router
+from .style import router as style_router
 
 # FS-NIDLO-OPS-01 — Sentry init. No-op when SENTRY_DSN is unset (dev /
 # test / fresh installs that haven't provisioned a Sentry project yet),
@@ -100,6 +101,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+app.include_router(style_router)
 # FS-NIDLO-OPS-01 — Admin-only ops endpoints (Celery health, future:
 # usage metrics for RPT-006). Mounted separately from `router` because
 # the auth gate is a different shared secret (X-Admin-API-Key, not the
