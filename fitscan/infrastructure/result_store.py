@@ -68,8 +68,56 @@ class APIKeyRecord(Base):
     last_used_at = Column(DateTime, nullable=True)
 
 
+class MeasurementRunRecord(Base):
+    """One row per /measure call. Powers the Nidlo admin's
+    Fitscan-usage report (RPT-006): measurements/day, p50/p95 latency,
+    error rate. Doesn't store the photo or measurements themselves —
+    those are captured in AvatarRecord when the caller opted into mesh
+    persistence. This table is purely operational telemetry."""
+
+    __tablename__ = "measurement_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    started_at = Column(DateTime, nullable=False, index=True)
+    completed_at = Column(DateTime, nullable=False)
+    latency_ms = Column(Integer, nullable=False)
+    success = Column(Boolean, nullable=False, index=True)
+    # Short token for the failure mode: "validation", "image", "pipeline",
+    # "claude", "internal". Null when success=true. Operators bucket on
+    # this to spot drift (e.g. claude failures spiking).
+    error_kind = Column(String(32), nullable=True)
+
+
 # Create tables on import (for SQLite dev mode)
 Base.metadata.create_all(engine)
+
+
+def record_measurement_run(
+    started_at: datetime,
+    completed_at: datetime,
+    success: bool,
+    error_kind: str | None = None,
+) -> None:
+    """Append-only telemetry write. Wrapped in try/except so a DB hiccup
+    can never bring down the /measure response — the report is nice to
+    have, the actual measurement is the product."""
+    try:
+        latency_ms = max(
+            0, int((completed_at - started_at).total_seconds() * 1000)
+        )
+        with Session(engine) as session:
+            session.add(
+                MeasurementRunRecord(
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    latency_ms=latency_ms,
+                    success=success,
+                    error_kind=error_kind,
+                )
+            )
+            session.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"record_measurement_run failed: {e}")
 
 
 class AvatarStore:

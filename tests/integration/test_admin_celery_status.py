@@ -125,3 +125,121 @@ class TestSuccessShape:
         assert body["workers"]["names"] == []
         assert body["active_tasks"] == 0
         assert body["scheduled_tasks"] == 0
+
+
+class TestUsageAuth:
+    def test_401_when_key_missing(self, client: TestClient) -> None:
+        response = client.get("/api/v1/admin/usage")
+        assert response.status_code == 401
+
+    def test_401_when_key_wrong(self, client: TestClient) -> None:
+        response = client.get(
+            "/api/v1/admin/usage",
+            headers={"X-Admin-API-Key": "wrong"},
+        )
+        assert response.status_code == 401
+
+
+class TestUsageShape:
+    def test_returns_zero_state_when_no_runs_recorded(
+        self, client: TestClient
+    ) -> None:
+        # Ensure measurement_runs is empty in the test DB.
+        from fitscan.infrastructure.result_store import (
+            MeasurementRunRecord,
+            engine,
+        )
+        from sqlalchemy.orm import Session
+
+        with Session(engine) as session:
+            session.query(MeasurementRunRecord).delete()
+            session.commit()
+
+        response = client.get(
+            "/api/v1/admin/usage",
+            headers={"X-Admin-API-Key": ADMIN_KEY},
+        )
+        assert response.status_code == 200
+        body = response.json()
+
+        assert body["total_measurements"] == 0
+        assert body["successful_measurements"] == 0
+        assert body["error_rate"] == 0.0
+        assert body["avg_latency_ms"] is None
+        assert body["p95_latency_ms"] is None
+        assert body["by_day"] == []
+        assert body["by_error_kind"] == []
+
+    def test_aggregates_seeded_runs_correctly(
+        self, client: TestClient
+    ) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        from fitscan.infrastructure.result_store import (
+            MeasurementRunRecord,
+            engine,
+        )
+        from sqlalchemy.orm import Session
+
+        with Session(engine) as session:
+            session.query(MeasurementRunRecord).delete()
+            session.commit()
+
+        now = datetime.now(timezone.utc)
+
+        with Session(engine) as session:
+            # 4 successful runs with varying latency.
+            for ms in (100, 200, 300, 400):
+                session.add(
+                    MeasurementRunRecord(
+                        started_at=now - timedelta(minutes=ms),
+                        completed_at=now - timedelta(minutes=ms - 1),
+                        latency_ms=ms,
+                        success=True,
+                        error_kind=None,
+                    )
+                )
+            # 1 failed run with kind=validation.
+            session.add(
+                MeasurementRunRecord(
+                    started_at=now - timedelta(minutes=10),
+                    completed_at=now - timedelta(minutes=9),
+                    latency_ms=50,
+                    success=False,
+                    error_kind="validation",
+                )
+            )
+            session.commit()
+
+        response = client.get(
+            "/api/v1/admin/usage",
+            headers={"X-Admin-API-Key": ADMIN_KEY},
+        )
+        assert response.status_code == 200
+        body = response.json()
+
+        assert body["total_measurements"] == 5
+        assert body["successful_measurements"] == 4
+        assert body["error_rate"] == 0.2
+        # Avg of 100/200/300/400 = 250.
+        assert body["avg_latency_ms"] == 250
+        # by_error_kind has the validation bucket.
+        kinds = {row["error_kind"]: row["count"] for row in body["by_error_kind"]}
+        assert kinds.get("validation") == 1
+
+    def test_clamps_days_window_to_safe_range(
+        self, client: TestClient
+    ) -> None:
+        # ?days=10000 must clamp; nobody needs a 27-year history page.
+        response = client.get(
+            "/api/v1/admin/usage?days=10000",
+            headers={"X-Admin-API-Key": ADMIN_KEY},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        # 365 max => the from/until span is at most ~366 days.
+        from datetime import datetime
+
+        f = datetime.fromisoformat(body["from"])
+        u = datetime.fromisoformat(body["until"])
+        assert (u - f).days <= 366

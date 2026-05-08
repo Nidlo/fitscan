@@ -11,7 +11,7 @@ from __future__ import annotations
 import hmac
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Header, HTTPException, status
@@ -115,3 +115,156 @@ def celery_status(
     health for the Nidlo admin's Operations panel. Read-only."""
     _verify_admin_key(x_admin_api_key)
     return _gather_celery_status()
+
+
+def _gather_usage(start: datetime, end: datetime) -> dict[str, Any]:
+    """Aggregate measurement_runs over [start, end). All math runs in
+    SQL — the table can grow into millions of rows over a year and we
+    don't want to ship them all to Python just to take a median."""
+    from sqlalchemy import case, func
+
+    from fitscan.infrastructure.result_store import (
+        MeasurementRunRecord,
+        engine,
+    )
+
+    # Use a session for read-only aggregation.
+    from sqlalchemy.orm import Session
+
+    with Session(engine) as session:
+        base = session.query(MeasurementRunRecord).filter(
+            MeasurementRunRecord.started_at >= start,
+            MeasurementRunRecord.started_at < end,
+        )
+
+        total = base.count()
+
+        if total == 0:
+            return {
+                "from": start.isoformat(),
+                "until": end.isoformat(),
+                "total_measurements": 0,
+                "successful_measurements": 0,
+                "error_rate": 0.0,
+                "avg_latency_ms": None,
+                "p95_latency_ms": None,
+                "by_day": [],
+                "by_error_kind": [],
+            }
+
+        successful = base.filter(MeasurementRunRecord.success.is_(True)).count()
+        error_rate = round((total - successful) / total, 4)
+
+        # Average latency: only over successful runs — failures often fail
+        # fast and skew the mean down. The QA spec says "average latency"
+        # which operators read as "how long does a real measurement take".
+        avg_latency = (
+            session.query(func.avg(MeasurementRunRecord.latency_ms))
+            .filter(
+                MeasurementRunRecord.started_at >= start,
+                MeasurementRunRecord.started_at < end,
+                MeasurementRunRecord.success.is_(True),
+            )
+            .scalar()
+        )
+        avg_latency_ms = int(avg_latency) if avg_latency is not None else None
+
+        # Per-day count + per-day error rate. SQLite + Postgres both
+        # accept date(started_at); we trust the testing path uses SQLite
+        # and prod uses Postgres which both honour func.date().
+        by_day_rows = (
+            session.query(
+                func.date(MeasurementRunRecord.started_at).label("day"),
+                func.count(MeasurementRunRecord.id).label("total"),
+                func.sum(
+                    case((MeasurementRunRecord.success.is_(True), 1), else_=0)
+                ).label("succeeded"),
+            )
+            .filter(
+                MeasurementRunRecord.started_at >= start,
+                MeasurementRunRecord.started_at < end,
+            )
+            .group_by("day")
+            .order_by("day")
+            .all()
+        )
+        by_day = [
+            {
+                "day": str(row.day),
+                "total": int(row.total),
+                "succeeded": int(row.succeeded or 0),
+                "failed": int(row.total) - int(row.succeeded or 0),
+            }
+            for row in by_day_rows
+        ]
+
+        by_error_rows = (
+            session.query(
+                MeasurementRunRecord.error_kind,
+                func.count(MeasurementRunRecord.id).label("total"),
+            )
+            .filter(
+                MeasurementRunRecord.started_at >= start,
+                MeasurementRunRecord.started_at < end,
+                MeasurementRunRecord.success.is_(False),
+            )
+            .group_by(MeasurementRunRecord.error_kind)
+            .order_by(func.count(MeasurementRunRecord.id).desc())
+            .all()
+        )
+        by_error_kind = [
+            {"error_kind": row.error_kind or "unknown", "count": int(row.total)}
+            for row in by_error_rows
+        ]
+
+        # Approximate p95: ORDER BY + OFFSET. Cheap and correct enough at
+        # the row counts we expect; if usage grows past ~10M runs/month,
+        # swap to a percentile_cont in Postgres (won't work in SQLite).
+        from sqlalchemy import desc
+
+        p95_offset = max(0, int(successful * 0.05) - 1)
+        p95_row = (
+            session.query(MeasurementRunRecord.latency_ms)
+            .filter(
+                MeasurementRunRecord.started_at >= start,
+                MeasurementRunRecord.started_at < end,
+                MeasurementRunRecord.success.is_(True),
+            )
+            .order_by(desc(MeasurementRunRecord.latency_ms))
+            .offset(p95_offset)
+            .first()
+        )
+        p95_latency_ms = (
+            int(p95_row.latency_ms) if p95_row is not None else None
+        )
+
+        return {
+            "from": start.isoformat(),
+            "until": end.isoformat(),
+            "total_measurements": total,
+            "successful_measurements": successful,
+            "error_rate": error_rate,
+            "avg_latency_ms": avg_latency_ms,
+            "p95_latency_ms": p95_latency_ms,
+            "by_day": by_day,
+            "by_error_kind": by_error_kind,
+        }
+
+
+@router.get("/usage")
+def usage(
+    x_admin_api_key: Annotated[
+        str | None, Header(alias="X-Admin-API-Key")
+    ] = None,
+    days: int = 30,
+) -> dict[str, Any]:
+    """FS-NIDLO-OPS-01 / QA-AD-RPT-006 — Per-day measurement counts +
+    latency + error breakdown over the trailing `days` window (default
+    30). Anthropic spend is intentionally NOT included here — it lives
+    in Anthropic's billing console and is linked from the admin
+    report's footer."""
+    _verify_admin_key(x_admin_api_key)
+    days = max(1, min(days, 365))
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+    return _gather_usage(start, end)
