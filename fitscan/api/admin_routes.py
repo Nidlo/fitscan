@@ -8,44 +8,21 @@ infrastructure-shaped data like worker counts and queue depth.
 
 from __future__ import annotations
 
-import hmac
 import os
-import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException
+
+from .dependencies import verify_admin_key
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
-
-def _verify_admin_key(
-    x_admin_api_key: Annotated[
-        str | None, Header(alias="X-Admin-API-Key")
-    ] = None,
-) -> None:
-    """Compare-then-throw with constant-time equality so a network
-    attacker can't time-leak the configured key. The empty-string
-    fall-through is deliberate: if the operator forgot to set the env,
-    EVERY request must fail rather than the endpoint silently becoming
-    public.
-    """
-    expected = os.getenv("FITSCAN_ADMIN_API_KEY", "")
-    if not expected:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="FITSCAN_ADMIN_API_KEY is not configured.",
-        )
-    if not x_admin_api_key or not hmac.compare_digest(
-        x_admin_api_key, expected
-    ):
-        # Constant-time fallback to keep the failure path indistinguishable
-        # from the success-then-mismatch path.
-        secrets.compare_digest("", expected)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or invalid admin API key.",
-        )
+# Backwards-compat alias — older imports inside this module still
+# reference the underscore-prefixed name; new call-sites import
+# `verify_admin_key` from `.dependencies` directly. Keeping the alias
+# avoids touching every internal use in this file.
+_verify_admin_key = verify_admin_key
 
 
 def _gather_celery_status() -> dict[str, Any]:

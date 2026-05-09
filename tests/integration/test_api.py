@@ -36,9 +36,23 @@ class TestMeasureEndpoint:
 
 
 class TestKeyRegistration:
+    """FS-NIDLO-AUTH-03 admin-only lockdown.
+
+    Public unauthenticated calls now 401. Snad mints keys via curl
+    with `X-Admin-API-Key`. Same gate as `/api/v1/admin/*`.
+    """
+
+    ADMIN_KEY = "test-admin-key-do-not-use-in-prod"
+    HEADERS = {"X-Admin-API-Key": ADMIN_KEY}
+
+    @pytest.fixture(autouse=True)
+    def _set_admin_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FITSCAN_ADMIN_API_KEY", self.ADMIN_KEY)
+
     def test_register_returns_api_key(self):
         response = client.post(
             "/api/v1/keys/register",
+            headers=self.HEADERS,
             data={
                 "owner_name": "Test User",
                 "owner_email": "test@example.com",
@@ -52,12 +66,13 @@ class TestKeyRegistration:
         assert data["monthly_limit"] == 50
 
     def test_register_rejects_unknown_tier(self):
-        # Audit fix — previously any string passed for `tier` was stored
-        # verbatim while the dict lookup silently fell back to free's
-        # limit. The DB row then claimed "tier=enterprise" with a free
-        # quota. Now an unknown tier is a 400.
+        # Tier allowlist (pre-existing): any string was stored
+        # verbatim while the dict lookup silently fell back to
+        # free's limit, producing rows that claimed "tier=enterprise"
+        # with a free quota. Now an unknown tier is a 400.
         response = client.post(
             "/api/v1/keys/register",
+            headers=self.HEADERS,
             data={
                 "owner_name": "Test User",
                 "owner_email": "test@example.com",
@@ -71,6 +86,7 @@ class TestKeyRegistration:
         for tier, limit in [("pro", 1000), ("enterprise", 999999)]:
             response = client.post(
                 "/api/v1/keys/register",
+                headers=self.HEADERS,
                 data={
                     "owner_name": "Test User",
                     "owner_email": f"{tier}@example.com",
@@ -81,3 +97,46 @@ class TestKeyRegistration:
             data = response.json()
             assert data["tier"] == tier
             assert data["monthly_limit"] == limit
+
+    def test_register_401_without_admin_header(self):
+        # FS-NIDLO-AUTH-03 — public unauthenticated calls must fail
+        # at the gate, before tier validation, before any DB write.
+        response = client.post(
+            "/api/v1/keys/register",
+            data={
+                "owner_name": "Anyone",
+                "owner_email": "anyone@example.com",
+                "tier": "free",
+            },
+        )
+        assert response.status_code == 401
+
+    def test_register_401_with_wrong_admin_key(self):
+        response = client.post(
+            "/api/v1/keys/register",
+            headers={"X-Admin-API-Key": "not-the-right-key"},
+            data={
+                "owner_name": "Anyone",
+                "owner_email": "anyone@example.com",
+                "tier": "free",
+            },
+        )
+        assert response.status_code == 401
+
+    def test_register_503_when_admin_env_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        # An operator who forgets to set FITSCAN_ADMIN_API_KEY in
+        # production must NOT get a silently-public endpoint —
+        # we'd rather fail noisily.
+        monkeypatch.setenv("FITSCAN_ADMIN_API_KEY", "")
+        response = client.post(
+            "/api/v1/keys/register",
+            headers=self.HEADERS,
+            data={
+                "owner_name": "Test",
+                "owner_email": "t@example.com",
+                "tier": "free",
+            },
+        )
+        assert response.status_code == 503

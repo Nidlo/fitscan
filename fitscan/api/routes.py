@@ -28,7 +28,7 @@ from fitscan.infrastructure.result_store import (
     record_measurement_run,
 )
 
-from .dependencies import get_measurement_service, verify_api_key
+from .dependencies import get_measurement_service, verify_admin_key, verify_api_key
 from .schemas import MeasurementsResponse, OverrideResponse
 
 # S-13 / FS-NIDLO-MEAS-04 — `safe_500` shape: clients see a generic
@@ -344,23 +344,38 @@ def _tier_limits() -> dict[str, int]:
     }
 
 
-@router.post("/keys/register", tags=["SaaS"])
+@router.post(
+    "/keys/register",
+    tags=["SaaS"],
+    dependencies=[Depends(verify_admin_key)],
+)
 def register_api_key(
     request: Request,
     owner_name: str = Form(...),
     owner_email: str = Form(...),
     tier: str = Form("free"),
 ):
-    """Register for a FitScan API key.
+    """Register a FitScan API key for a customer.
 
-    TODO(FS-NIDLO-AUTH-03): currently public. The lockdown trust model
-    is a pending Snad-decision (admin-only / trusted-network / CLI).
-    Until that lands, this endpoint is hardened with:
-      - tier allowlist (no arbitrary string accepted),
-      - audit log on every registration so abuse is visible,
-    but it remains rate-unlimited at the application layer. Operators
-    relying on this in production MUST front it with an Nginx allow-list
-    or equivalent.
+    FS-NIDLO-AUTH-03 lockdown — admin-only. Snad mints keys via:
+
+        curl -X POST https://fitscan.nidlo.com/api/v1/keys/register \\
+             -H "X-Admin-API-Key: $FITSCAN_ADMIN_API_KEY" \\
+             -F "owner_name=Acme Tailoring" \\
+             -F "owner_email=ops@acme.test" \\
+             -F "tier=pro"
+
+    Until a Filament admin button ships, this curl is the canonical
+    issuance path. The same `X-Admin-API-Key` header gates the
+    `/api/v1/admin/*` operational routes — one secret to rotate.
+
+    Hardening that's been in place since pre-lockdown:
+      - tier allowlist (no arbitrary string accepted)
+      - audit log on every registration so abuse is visible
+
+    See `LAUNCHING.md` §6 for the trust-model trade-off (admin-only
+    vs. trusted-network vs. email-confirm) and why admin-only is
+    right for the next ~6 months of curated beta.
     """
 
     tier_limits = _tier_limits()

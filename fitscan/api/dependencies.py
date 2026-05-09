@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
+import secrets
 from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Annotated
@@ -81,3 +83,40 @@ def verify_api_key(
         record.usage_this_month += 1
         record.last_used_at = datetime.now(timezone.utc)
         session.commit()
+
+
+def verify_admin_key(
+    x_admin_api_key: Annotated[
+        str | None, Header(alias="X-Admin-API-Key")
+    ] = None,
+) -> None:
+    """Gate admin-only endpoints with `FITSCAN_ADMIN_API_KEY`.
+
+    Used by both the operational endpoints under
+    `/api/v1/admin/*` (Celery health, usage stats) AND by
+    `/api/v1/keys/register` per the FS-NIDLO-AUTH-03 lockdown
+    decision (admin-only minting; Snad issues keys via curl until
+    a Filament UI exists).
+
+    `hmac.compare_digest` for constant-time equality so a network
+    attacker can't time-leak the configured key (A-04). The
+    empty-string fall-through is deliberate: if the operator
+    forgot to set the env, EVERY request must fail rather than
+    the endpoint silently becoming public.
+    """
+    expected = os.getenv("FITSCAN_ADMIN_API_KEY", "")
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="FITSCAN_ADMIN_API_KEY is not configured.",
+        )
+    if not x_admin_api_key or not hmac.compare_digest(
+        x_admin_api_key, expected
+    ):
+        # Constant-time fallback to keep the failure path
+        # indistinguishable from the success-then-mismatch path.
+        secrets.compare_digest("", expected)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid admin API key.",
+        )
