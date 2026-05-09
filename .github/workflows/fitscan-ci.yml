@@ -2,14 +2,14 @@ name: FitScan CI/CD
 
 on:
   push:
-    branches: [main, develop]
+    branches: [dev-snad, development, staging, production]
     paths:
       - 'fitscan/**'
       - 'tests/**'
       - 'pyproject.toml'
       - '.github/workflows/fitscan-ci.yml'
   pull_request:
-    branches: [main]
+    branches: [development, staging, production]
     paths:
       - 'fitscan/**'
       - 'tests/**'
@@ -131,7 +131,7 @@ jobs:
     name: Deploy FitScan to server
     runs-on: ubuntu-22.04
     needs: [unit-tests, integration-tests]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/production' && github.event_name == 'push'
 
     steps:
       - name: Deploy via SSH
@@ -144,8 +144,8 @@ jobs:
             set -e
             cd /home/fitscan/app
 
-            git fetch origin main
-            git reset --hard origin/main
+            git fetch origin production
+            git reset --hard origin/production
 
             venv/bin/pip install -e . --quiet
             venv/bin/alembic upgrade head
