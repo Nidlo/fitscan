@@ -14,6 +14,13 @@ import cv2
 import numpy as np
 from loguru import logger
 
+from fitscan.domain.models import (
+    BodyMeasurements,
+    LandmarkVerdict,
+    LandmarkVerification,
+    ValidationResult,
+)
+
 
 @lru_cache(maxsize=4)
 def _anthropic_client(api_key: str) -> Any:
@@ -39,12 +46,6 @@ def _anthropic_client(api_key: str) -> Any:
 
     return Anthropic(api_key=api_key)
 
-from fitscan.domain.models import (
-    BodyMeasurements,
-    LandmarkVerdict,
-    LandmarkVerification,
-    ValidationResult,
-)
 
 LANDMARK_VERIFICATION_PROMPT = """
 You are a body-landmark verification assistant for a fashion-tech CV pipeline.
@@ -247,9 +248,7 @@ class ClaudeValidator:
                 )
             return LandmarkVerification(verdicts=verdicts, raw_response=raw)
         except json.JSONDecodeError:
-            logger.warning(
-                "Claude landmark verification returned non-JSON; skipping."
-            )
+            logger.warning("Claude landmark verification returned non-JSON; skipping.")
             return LandmarkVerification(verdicts={}, raw_response="")
         except Exception as e:  # noqa: BLE001 — defence in depth
             logger.warning(f"Claude landmark verification failed: {e}")

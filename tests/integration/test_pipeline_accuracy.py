@@ -107,6 +107,4 @@ def test_pipeline_within_tolerance(
 
     if failures:
         formatted = "\n".join(f"  - {line}" for line in failures)
-        pytest.fail(
-            f"Numerical regression in {image_path.name}:\n{formatted}"
-        )
+        pytest.fail(f"Numerical regression in {image_path.name}:\n{formatted}")

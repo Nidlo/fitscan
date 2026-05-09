@@ -1,4 +1,5 @@
 """Tests for confidence scoring."""
+
 from fitscan.domain.models import (
     BodyMeasurements,
     SingleMeasurement,

@@ -5,10 +5,9 @@ All I/O is mocked — no real images or model weights required.
 Verifies that the service correctly delegates to the pipeline and
 surfaces results in the expected dict shape.
 """
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from fitscan.application.measurement_service import MeasurementService
 from fitscan.application.pipeline_orchestrator import PipelineResult
@@ -17,8 +16,12 @@ from fitscan.domain.models import BodyMeasurements, SingleMeasurement
 
 def make_measurements(**kwargs) -> BodyMeasurements:
     defaults = dict(
-        shoulder_cm=SingleMeasurement(value_cm=40.0, confidence=0.75, source="geometric"),
-        shoulder_to_hip_cm=SingleMeasurement(value_cm=80.0, confidence=0.74, source="geometric"),
+        shoulder_cm=SingleMeasurement(
+            value_cm=40.0, confidence=0.75, source="geometric"
+        ),
+        shoulder_to_hip_cm=SingleMeasurement(
+            value_cm=80.0, confidence=0.74, source="geometric"
+        ),
         source="geometric",
         gender_profile="ladies",
     )
@@ -30,7 +33,9 @@ class TestMeasurementService:
     def test_measure_delegates_to_pipeline_and_returns_dict(self):
         mock_pipeline = MagicMock()
         measurements = make_measurements()
-        mock_pipeline.run_with_mesh.return_value = PipelineResult(measurements=measurements)
+        mock_pipeline.run_with_mesh.return_value = PipelineResult(
+            measurements=measurements
+        )
 
         svc = MeasurementService(pipeline=mock_pipeline)
         result = svc.measure("/tmp/front.jpg", height_cm=170.0)
@@ -53,7 +58,9 @@ class TestMeasurementService:
 
     def test_measure_passes_all_kwargs_to_pipeline(self):
         mock_pipeline = MagicMock()
-        mock_pipeline.run.return_value = PipelineResult(measurements=make_measurements())
+        mock_pipeline.run.return_value = PipelineResult(
+            measurements=make_measurements()
+        )
 
         svc = MeasurementService(pipeline=mock_pipeline)
         svc.measure(
@@ -94,9 +101,13 @@ class TestMeasurementService:
     def test_measure_result_includes_measurement_values(self):
         mock_pipeline = MagicMock()
         measurements = make_measurements(
-            shoulder_cm=SingleMeasurement(value_cm=38.5, confidence=0.80, source="geometric"),
+            shoulder_cm=SingleMeasurement(
+                value_cm=38.5, confidence=0.80, source="geometric"
+            ),
         )
-        mock_pipeline.run_with_mesh.return_value = PipelineResult(measurements=measurements)
+        mock_pipeline.run_with_mesh.return_value = PipelineResult(
+            measurements=measurements
+        )
 
         svc = MeasurementService(pipeline=mock_pipeline)
         result = svc.measure("/tmp/img.jpg")
@@ -125,8 +136,11 @@ class TestMeasurementService:
 
     def test_create_pipeline_uses_disable_smpl_flag(self):
         """create_pipeline(enable_smpl=False) should not instantiate SMPLBodyFitter."""
-        with patch("fitscan.application.measurement_service.SMPLBodyFitter") as mock_smpl:
+        with patch(
+            "fitscan.application.measurement_service.SMPLBodyFitter"
+        ) as mock_smpl:
             from fitscan.application.measurement_service import create_pipeline
+
             with patch("fitscan.application.measurement_service.PipelineOrchestrator"):
                 create_pipeline(enable_smpl=False, enable_claude=False)
             mock_smpl.assert_called_once()

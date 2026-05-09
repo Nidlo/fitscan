@@ -46,9 +46,7 @@ def avatar_glb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
 
     with Session(engine) as session:
         # Wipe any leftover rows from a previous test run.
-        session.query(AvatarRecord).filter(
-            AvatarRecord.avatar_id == avatar_id
-        ).delete()
+        session.query(AvatarRecord).filter(AvatarRecord.avatar_id == avatar_id).delete()
         record = AvatarRecord(
             avatar_id=avatar_id,
             gender_profile="ladies",
@@ -71,9 +69,7 @@ def avatar_glb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
 
     # Cleanup
     with Session(engine) as session:
-        session.query(AvatarRecord).filter(
-            AvatarRecord.avatar_id == avatar_id
-        ).delete()
+        session.query(AvatarRecord).filter(AvatarRecord.avatar_id == avatar_id).delete()
         session.commit()
 
 
@@ -134,9 +130,7 @@ class TestAvatarGlbRoute:
 
 class TestAvatarThumbnailRoute:
     def test_returns_png_when_avatar_exists(self, avatar_glb: dict):
-        response = client.get(
-            f"/api/v1/avatar/{avatar_glb['avatar_id']}/thumbnail"
-        )
+        response = client.get(f"/api/v1/avatar/{avatar_glb['avatar_id']}/thumbnail")
         assert response.status_code == 200
         assert response.headers["content-type"] == "image/png"
 

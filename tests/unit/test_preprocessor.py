@@ -1,4 +1,5 @@
 """Tests for image preprocessor."""
+
 import numpy as np
 
 from fitscan.cv_pipeline.preprocessor import ImagePreprocessor

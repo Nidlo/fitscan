@@ -1,6 +1,6 @@
 """Tests for pose detector."""
+
 import numpy as np
-import pytest
 
 from fitscan.cv_pipeline.pose_detector import LANDMARK_NAMES, PoseDetector
 from fitscan.domain.exceptions import PoseDetectionError

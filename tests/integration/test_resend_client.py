@@ -74,8 +74,7 @@ class TestResendClientSuccess:
         assert captured["headers"] is not None
         assert "List-Unsubscribe" in captured["headers"]
         assert (
-            captured["headers"]["List-Unsubscribe-Post"]
-            == "List-Unsubscribe=One-Click"
+            captured["headers"]["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
         )
 
 

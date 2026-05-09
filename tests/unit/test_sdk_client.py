@@ -1,4 +1,5 @@
 """Tests for SDK client."""
+
 from fitscan.sdk.client import FitScanClient
 
 
@@ -18,8 +19,6 @@ class TestFitScanClient:
             assert client.base == "http://localhost:8000"
 
     def test_health_returns_false_when_unreachable(self):
-        client = FitScanClient(
-            base_url="http://localhost:19999", timeout=1.0
-        )
+        client = FitScanClient(base_url="http://localhost:19999", timeout=1.0)
         assert client.health() is False
         client.close()

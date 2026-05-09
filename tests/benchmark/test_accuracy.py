@@ -2,6 +2,7 @@
 Accuracy benchmark against ground truth measurements.
 Run: pytest tests/benchmark/ -v --tb=short
 """
+
 import json
 from pathlib import Path
 

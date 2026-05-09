@@ -102,9 +102,7 @@ def record_measurement_run(
     can never bring down the /measure response — the report is nice to
     have, the actual measurement is the product."""
     try:
-        latency_ms = max(
-            0, int((completed_at - started_at).total_seconds() * 1000)
-        )
+        latency_ms = max(0, int((completed_at - started_at).total_seconds() * 1000))
         with Session(engine) as session:
             session.add(
                 MeasurementRunRecord(

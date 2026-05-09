@@ -103,7 +103,5 @@ class PoseDetector:
         re-verification.
         """
         return sorted(
-            name
-            for name, kp in pose.keypoints.items()
-            if kp.visibility < threshold
+            name for name, kp in pose.keypoints.items() if kp.visibility < threshold
         )

@@ -1,12 +1,13 @@
 """Tests for domain exceptions."""
+
 from fitscan.domain.exceptions import (
     FitScanError,
     ImageQualityError,
     MeasurementError,
     ModelNotFoundError,
     PoseDetectionError,
-    SMPLFittingError,
     ScaleCalibrationError,
+    SMPLFittingError,
     ValidationError,
 )
 

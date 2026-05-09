@@ -83,7 +83,10 @@ class MeasurementService:
             enable_claude=enable_claude,
         )
         out = result.measurements.to_dict()
-        if result.landmark_verification is not None and result.landmark_verification.verdicts:
+        if (
+            result.landmark_verification is not None
+            and result.landmark_verification.verdicts
+        ):
             out["landmark_verification"] = {
                 "verdicts": {
                     name: {

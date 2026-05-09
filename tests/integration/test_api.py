@@ -1,4 +1,5 @@
 """Integration tests for FastAPI endpoints."""
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -123,9 +124,7 @@ class TestKeyRegistration:
         )
         assert response.status_code == 401
 
-    def test_register_503_when_admin_env_missing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_register_503_when_admin_env_missing(self, monkeypatch: pytest.MonkeyPatch):
         # An operator who forgets to set FITSCAN_ADMIN_API_KEY in
         # production must NOT get a silently-public endpoint —
         # we'd rather fail noisily.

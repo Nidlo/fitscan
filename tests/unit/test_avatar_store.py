@@ -11,9 +11,6 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import pytest
-
-from fitscan.domain.models import AvatarExport, BodyMeasurements
 from fitscan.infrastructure.result_store import (
     AvatarRecord,
     AvatarStore,
@@ -105,9 +102,7 @@ class TestAvatarStoreDelete:
 
 
 class TestAvatarStoreRetention:
-    def test_delete_older_than_removes_only_stale_rows(
-        self, tmp_path: Path
-    ) -> None:
+    def test_delete_older_than_removes_only_stale_rows(self, tmp_path: Path) -> None:
         now = datetime.now(timezone.utc)
         old_id = "stale-avatar"
         fresh_id = "fresh-avatar"
@@ -133,9 +128,7 @@ class TestAvatarStoreRetention:
         # Cleanup
         store.delete(fresh_id)
 
-    def test_delete_older_than_is_zero_when_nothing_stale(
-        self, tmp_path: Path
-    ) -> None:
+    def test_delete_older_than_is_zero_when_nothing_stale(self, tmp_path: Path) -> None:
         avatar_id = "fresh-only"
         _seed_avatar(
             tmp_path / avatar_id,

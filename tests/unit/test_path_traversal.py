@@ -37,9 +37,7 @@ class TestResolveInsideAvatarsRoot:
             _resolve_inside_avatars_root("")
         assert exc_info.value.status_code == 404
 
-    def test_rejects_path_to_nonexistent_file_inside_root(
-        self, tmp_path: Path
-    ) -> None:
+    def test_rejects_path_to_nonexistent_file_inside_root(self, tmp_path: Path) -> None:
         """Even when the path resolves inside the root, missing files
         return 404 — never 200 with empty bytes."""
         ghost = _AVATARS_ROOT / "ghost-id" / "avatar.glb"

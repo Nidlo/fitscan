@@ -49,7 +49,9 @@ class ResendClient:
         transport: httpx.BaseTransport | None = None,
         timeout_seconds: float = 5.0,
     ) -> None:
-        self._api_key = api_key if api_key is not None else os.getenv("RESEND_API_KEY", "")
+        self._api_key = (
+            api_key if api_key is not None else os.getenv("RESEND_API_KEY", "")
+        )
         self._from_address = (
             from_address
             if from_address is not None

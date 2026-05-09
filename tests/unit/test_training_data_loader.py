@@ -74,9 +74,7 @@ def sample_export(tmp_path: Path) -> Path:
 
 
 class TestLoadJsonl:
-    def test_parses_documented_shape_into_dataclass(
-        self, sample_export: Path
-    ) -> None:
+    def test_parses_documented_shape_into_dataclass(self, sample_export: Path) -> None:
         rows = load_jsonl(sample_export)
         assert len(rows) == 2
 
@@ -158,9 +156,7 @@ class TestIterJsonl:
 
 
 class TestGroupBySubject:
-    def test_buckets_examples_by_subject_anon(
-        self, sample_export: Path
-    ) -> None:
+    def test_buckets_examples_by_subject_anon(self, sample_export: Path) -> None:
         # Both rows share subject_anon → both buckets land in one
         # group. This is the train/test split anchor.
         rows = load_jsonl(sample_export)
@@ -168,9 +164,7 @@ class TestGroupBySubject:
         assert list(groups.keys()) == ["9f86d081884c7d65"]
         assert len(groups["9f86d081884c7d65"]) == 2
 
-    def test_separate_subjects_into_separate_buckets(
-        self, tmp_path: Path
-    ) -> None:
+    def test_separate_subjects_into_separate_buckets(self, tmp_path: Path) -> None:
         path = tmp_path / "two-subjects.jsonl"
         _write_jsonl(
             path,

@@ -58,6 +58,7 @@ def _safe_500(probe: str, exc: BaseException) -> HTTPException:
         detail={"message": _PIPELINE_FAILED_MESSAGE, "trace_id": trace_id},
     )
 
+
 # Reusable dependency list for routes that require API-key auth.
 _auth = [Depends(verify_api_key)]
 
@@ -406,7 +407,8 @@ def register_api_key(
     # raw key is NOT logged; only the SHA-256 prefix to correlate later.
     client_ip = request.client.host if request.client else "unknown"
     logger.info(
-        "api_key_issued tier={tier} owner_email={email} client_ip={ip} key_hash_prefix={prefix}",
+        "api_key_issued tier={tier} owner_email={email} "
+        "client_ip={ip} key_hash_prefix={prefix}",
         tier=tier,
         email=owner_email,
         ip=client_ip,
@@ -426,7 +428,10 @@ def register_api_key(
     response_model=MeasurementsResponse,
     tags=["Measure"],
     summary="Measurements only — no avatar generated",
-    description="Faster than /measure. Returns only the 24-field measurement JSON. No GLB is generated.",
+    description=(
+        "Faster than /measure. Returns only the 24-field measurement JSON. "
+        "No GLB is generated."
+    ),
     dependencies=_auth,
 )
 def measure_measurements_only(
@@ -473,7 +478,10 @@ def measure_measurements_only(
     "/measure/avatar",
     tags=["Measure"],
     summary="Avatar only — returns GLB binary directly",
-    description="Returns the raw GLB binary. Response Content-Type is model/gltf-binary. No measurements JSON.",
+    description=(
+        "Returns the raw GLB binary. Response Content-Type is model/gltf-binary. "
+        "No measurements JSON."
+    ),
     dependencies=_auth,
 )
 def measure_avatar_only(
@@ -502,14 +510,12 @@ def measure_avatar_only(
         if mesh is None:
             raise HTTPException(500, "3D mesh generation failed.")
 
-
-        source_img = cv2.cvtColor(
-            cv2.imdecode(np.frombuffer(content, np.uint8), cv2.IMREAD_COLOR),
-            cv2.COLOR_BGR2RGB,
-        )
-        gen = AvatarGenerator()
-
+        decoded = cv2.imdecode(np.frombuffer(content, np.uint8), cv2.IMREAD_COLOR)
+        if decoded is None:
+            raise HTTPException(400, "Could not decode uploaded image.")
+        source_img = cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB)
         with tempfile.TemporaryDirectory() as tmpdir:
+            gen = AvatarGenerator(output_dir=Path(tmpdir))
             avatar = gen.generate(
                 mesh=mesh,
                 source_image=source_img,
@@ -517,7 +523,6 @@ def measure_avatar_only(
                 betas=betas or [],
                 thetas=thetas or [],
                 gender_profile=gender_profile,
-                output_dir=Path(tmpdir),
             )
             glb_bytes = Path(avatar.glb_path).read_bytes()
             height_val = result.height_cm.value_cm if result.height_cm else 0

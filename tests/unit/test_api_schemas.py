@@ -1,4 +1,5 @@
 """Tests for API schemas."""
+
 from fitscan.api.schemas import MeasurementsResponse, SingleMeasurementOut
 
 

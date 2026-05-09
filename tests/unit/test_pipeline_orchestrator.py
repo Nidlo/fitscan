@@ -1,4 +1,5 @@
 """Tests for pipeline orchestrator with mock dependencies."""
+
 import numpy as np
 import pytest
 
@@ -69,7 +70,9 @@ class MockScaleCalibrator:
         return ScaleFactor(pixels_per_cm=5.0, source="user_height", confidence=0.9)
 
     def calibrate_from_reference_object(self, image, object_cm):
-        return ScaleFactor(pixels_per_cm=5.0, source="reference_object", confidence=0.95)
+        return ScaleFactor(
+            pixels_per_cm=5.0, source="reference_object", confidence=0.95
+        )
 
 
 class MockSilhouetteMeasurer:

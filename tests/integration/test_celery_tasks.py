@@ -71,12 +71,8 @@ class TestCleanupOldAvatars:
         now = datetime(2026, 5, 7, 12, 0, 0, tzinfo=timezone.utc)
         with freeze_time(now):
             with Session(engine) as session:
-                _seed_avatar(
-                    session, "old-1", now - timedelta(days=40), tmp_path
-                )
-                _seed_avatar(
-                    session, "fresh-1", now - timedelta(days=5), tmp_path
-                )
+                _seed_avatar(session, "old-1", now - timedelta(days=40), tmp_path)
+                _seed_avatar(session, "fresh-1", now - timedelta(days=5), tmp_path)
                 session.commit()
 
             removed = cleanup_old_avatars.run(days=30)
@@ -86,18 +82,12 @@ class TestCleanupOldAvatars:
                 ids = {r.avatar_id for r in session.query(AvatarRecord).all()}
                 assert ids == {"fresh-1"}
 
-    def test_removes_zero_when_all_avatars_are_within_window(
-        self, tmp_path: Path
-    ):
+    def test_removes_zero_when_all_avatars_are_within_window(self, tmp_path: Path):
         now = datetime(2026, 5, 7, 12, 0, 0, tzinfo=timezone.utc)
         with freeze_time(now):
             with Session(engine) as session:
-                _seed_avatar(
-                    session, "fresh-a", now - timedelta(days=1), tmp_path
-                )
-                _seed_avatar(
-                    session, "fresh-b", now - timedelta(days=10), tmp_path
-                )
+                _seed_avatar(session, "fresh-a", now - timedelta(days=1), tmp_path)
+                _seed_avatar(session, "fresh-b", now - timedelta(days=10), tmp_path)
                 session.commit()
 
             removed = cleanup_old_avatars.run(days=30)
@@ -111,12 +101,8 @@ class TestCleanupOldAvatars:
         now = datetime(2026, 5, 7, 12, 0, 0, tzinfo=timezone.utc)
         with freeze_time(now):
             with Session(engine) as session:
-                _seed_avatar(
-                    session, "8d-old", now - timedelta(days=8), tmp_path
-                )
-                _seed_avatar(
-                    session, "3d-old", now - timedelta(days=3), tmp_path
-                )
+                _seed_avatar(session, "8d-old", now - timedelta(days=8), tmp_path)
+                _seed_avatar(session, "3d-old", now - timedelta(days=3), tmp_path)
                 session.commit()
 
             removed = cleanup_old_avatars.run(days=7)

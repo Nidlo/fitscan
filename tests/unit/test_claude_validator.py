@@ -1,7 +1,8 @@
 """Tests for Claude validator."""
+
 import numpy as np
 
-from fitscan.domain.models import BodyMeasurements, SingleMeasurement
+from fitscan.domain.models import BodyMeasurements
 from fitscan.validation.claude_validator import ClaudeValidator
 
 

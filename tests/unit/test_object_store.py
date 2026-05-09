@@ -1,8 +1,7 @@
 """Tests for object store."""
+
 import os
 from pathlib import Path
-
-import pytest
 
 
 class TestObjectStoreLocal:
