@@ -119,8 +119,14 @@ The service code is the same for all three; the difference is **which API key th
 7. **Confirm Sentry receives a test event** (if you set `SENTRY_DSN`):
    ```bash
    sudo systemctl restart fitscan-api
-   # then deliberately hit a bad endpoint → check Sentry dashboard
+   cd /home/fitscan/app && make sentry-smoke
+   # → "Sentry test event sent. Event ID: …"
+   # Open https://sentry.io/issues/?query=is:unresolved within ~30s.
    ```
+
+   The same probe exists on the backend: `cd backend && php artisan sentry:smoke-test`.
+   Both skip with a friendly message (exit 0) when their DSN is unset, so it's
+   safe to run anywhere.
 
 ### Updating
 
@@ -398,11 +404,11 @@ Either way: **estimated build effort 3-4 days** once the AUTH-03 trust model is 
 
 These items gate "we open to external customers". Tracked as the pre-beta blockers in [ROADMAP.md §75](ROADMAP.md):
 
-- [ ] **AUTH-03** — `/keys/register` lockdown trust model (admin-only / trusted-network / email-confirm). 📐 Snad-decision.
+- [x] **AUTH-03** — `/keys/register` lockdown trust model: admin-only via `X-Admin-API-Key` (same gate as `/api/v1/admin/*`). Snad mints keys via curl until the Filament panel ships. ✅ shipped.
 - [ ] **TEST-01 fixtures** — 8-10 ground-truth photos so numerical regressions can't slip through silently. The harness is ready ([`tests/integration/test_pipeline_accuracy.py`](tests/integration/test_pipeline_accuracy.py)); fixtures need sourcing. 📐 Snad-decision (synthetic vs consented real).
 - [ ] **OPS-02** GPU planning — Contabo CPU is fine for beta scale; public launch needs measurable latency budget. 📐 Snad-decision.
-- [ ] **OPS-01** Sentry actually wired (just needs the DSN env var; SDK is shipped, ✅).
-- [ ] **OPS-07** Celery beat under systemd — without it the retention + quota-reset tasks never fire. The systemd unit lives in `deploy/install.sh` already; just verify it survived the latest deploy.
+- [ ] **OPS-01** Sentry actually wired — SDK is shipped on both services and a verification probe exists (`make sentry-smoke` in fitscan, `php artisan sentry:smoke-test` in backend). Snad-side: create the Sentry project, set `SENTRY_DSN` in both `.env` files on the server, run each smoke command and confirm the event lands.
+- [ ] **OPS-07** Celery beat under systemd — without it the retention + quota-reset tasks never fire. The systemd unit lives in `deploy/install.sh` already; verify with `sudo systemctl is-enabled fitscan-beat && sudo systemctl is-active fitscan-beat` after each deploy.
 - [ ] **VALID-02** privacy-copy contract for Claude consent — Snad-decision on the exact wording the frontend shows users before shipping their photo to Anthropic.
 - [ ] Marketing landing page (separate Next.js project, ~2 days)
 - [ ] Stripe / billing integration (subscription OR credits — see [§8](#8-profitability-path), ~3-4 days)

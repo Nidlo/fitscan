@@ -4,7 +4,7 @@
 
 .PHONY: help setup dev test test-unit test-integration test-smoke \
         db-start db-migrate db-reset db-shell db-create-migration db-status \
-        models lint format typecheck check clean docs \
+        models lint format typecheck check clean docs sentry-smoke \
         server-install server-deploy server-logs server-restart
 
 PYTHON   := $(shell command -v python3.11 2>/dev/null || echo python3)
@@ -165,3 +165,6 @@ keys-list: ## List all API keys (hashed — no secrets shown)
 
 health: ## Quick health check against running local API
 	@curl -sf http://localhost:$(PORT)/api/v1/health | python3 -m json.tool
+
+sentry-smoke: ## Fire a Sentry test event (skips with friendly msg if SENTRY_DSN unset)
+	$(VENV)/bin/python scripts/sentry_smoke.py

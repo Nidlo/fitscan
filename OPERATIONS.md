@@ -147,16 +147,28 @@ NEXT_PUBLIC_FITSCAN_URL=http://localhost:8000
 
 ## 3. API ENDPOINTS
 
-All endpoints require `X-API-Key: fsk_your_key` header (except `/health` and `/keys/register`).
+All endpoints require `X-API-Key: fsk_your_key` (except `/health`).
+`/keys/register` and `/api/v1/admin/*` require `X-Admin-API-Key` instead — see
+**Get an API key** below.
 
 ### Get an API key
 
+`/keys/register` is **admin-only** (FS-NIDLO-AUTH-03) — Snad mints keys for
+customers, never the customer. Set `FITSCAN_ADMIN_API_KEY` in `fitscan/.env`
+to the same secret used by `/api/v1/admin/*`, then:
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/keys/register \
+  -H "X-Admin-API-Key: $FITSCAN_ADMIN_API_KEY" \
   -F "owner_name=StitchHub Dev" \
   -F "owner_email=dev@stitchub.com" \
   -F "tier=free"
 ```
+
+A request without the header (or with the wrong key) returns `401`.
+If `FITSCAN_ADMIN_API_KEY` is unset on the server, every call returns `503` —
+deliberate, so a misconfigured deploy fails noisily instead of silently
+exposing key minting to the public.
 
 Response:
 ```json
@@ -376,6 +388,47 @@ Then restart:
 sudo systemctl restart fitscan
 curl http://localhost:8000/api/v1/health
 ```
+
+### Pre-launch verification (run after every deploy)
+
+These four checks catch ~all "service starts but is silently broken" classes
+of bug. Run them in order; each is one command and idempotent.
+
+1. **Health** — service is up and the DB is reachable.
+
+   ```bash
+   curl -fsS http://localhost:8000/api/v1/health
+   ```
+
+2. **Sentry wiring** — DSN is set and events actually land.
+
+   ```bash
+   cd /home/fitscan/app && make sentry-smoke
+   # Skip if SENTRY_DSN unset (exit 0). Otherwise prints an event id;
+   # confirm it appears at https://sentry.io/issues/?query=is:unresolved
+   # within ~30s.
+   ```
+
+3. **Celery beat under systemd** — without it the retention + quota-reset
+   tasks never fire (FS-NIDLO-OPS-07).
+
+   ```bash
+   sudo systemctl is-enabled fitscan-beat   # → enabled
+   sudo systemctl is-active fitscan-beat    # → active
+   ```
+
+4. **Admin gate is real** — `/keys/register` must reject unauthenticated
+   callers and minting should require the admin key (FS-NIDLO-AUTH-03).
+
+   ```bash
+   curl -i -X POST http://localhost:8000/api/v1/keys/register \
+     -F "owner_name=probe" -F "owner_email=probe@nidlo.test" -F "tier=free"
+   # Expect: HTTP/1.1 401  (or 503 if FITSCAN_ADMIN_API_KEY isn't set yet —
+   # that's the noisy-fail mode; set the env var and retry)
+   ```
+
+The same Sentry probe exists on the Laravel side — run
+`cd backend && php artisan sentry:smoke-test` after deploying the backend.
 
 ---
 
