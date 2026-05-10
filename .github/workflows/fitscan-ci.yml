@@ -116,6 +116,7 @@ jobs:
           DATABASE_URL=postgresql://fitscan:password@localhost:5432/fitscan_test
           TEST_DATABASE_URL=postgresql://fitscan:password@localhost:5432/fitscan_test
           ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-test_placeholder}
+          FITSCAN_REQUIRE_API_KEY=false
           STORAGE_BACKEND=local
           ENABLE_CLAUDE_VALIDATION=false
           ENABLE_SMPL_FITTING=false
