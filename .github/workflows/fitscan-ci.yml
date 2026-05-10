@@ -15,6 +15,12 @@ on:
       - 'tests/**'
       - 'pyproject.toml'
 
+# One run per workflow per branch. Cancel an older in-progress run if a
+# new push lands — except on production, where deploy runs to the end.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/production' }}
+
 env:
   PYTHON_VERSION: "3.11"
 
