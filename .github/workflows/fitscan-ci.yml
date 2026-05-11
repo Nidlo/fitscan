@@ -160,6 +160,16 @@ jobs:
             venv/bin/alembic upgrade head
             sudo systemctl restart fitscan
 
-            sleep 3
-            curl -sf http://localhost:8000/api/v1/health || exit 1
-            echo "FitScan deployed successfully."
+            # fitscan loads PyTorch + MediaPipe on boot — cold start takes
+            # 20-30s. Poll the healthcheck every 2s for up to 60s before
+            # giving up. A flat sleep+single-curl was too short.
+            for i in $(seq 1 30); do
+              if curl -sf http://localhost:8000/api/v1/health >/dev/null; then
+                echo "FitScan deployed successfully (healthy after $((i*2))s)."
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "FitScan failed to come up within 60s — recent journal:"
+            systemctl status fitscan --no-pager | head -20 || true
+            exit 1
