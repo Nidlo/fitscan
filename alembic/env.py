@@ -25,7 +25,13 @@ from alembic import context
 try:
     from dotenv import load_dotenv
 
-    for candidate in (".env.test", ".env"):
+    # .env first, .env.test second. Both files exist in production
+    # (.env.test is checked into the repo as a CI fixture; .env is the
+    # real per-host config). Loading .env.test first meant production
+    # alembic runs against the sqlite default — silent no-op on the
+    # real postgres database. CI workflows that want .env.test still
+    # work because in CI .env doesn't exist.
+    for candidate in (".env", ".env.test"):
         if Path(candidate).exists():
             load_dotenv(candidate, override=False)
             break
