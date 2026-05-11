@@ -56,7 +56,8 @@ def verify_api_key(
             headers={"WWW-Authenticate": "ApiKey"},
         )
 
-    # Local import to avoid a circular import at module load: routes.py -> dependencies.py -> result_store.py
+    # Local import to avoid a circular import at module load:
+    # routes.py -> dependencies.py -> result_store.py
     from fitscan.infrastructure.result_store import APIKeyRecord, engine
 
     key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
@@ -80,15 +81,13 @@ def verify_api_key(
                 detail="Monthly API limit exceeded.",
             )
 
-        record.usage_this_month += 1
-        record.last_used_at = datetime.now(timezone.utc)
+        record.usage_this_month += 1  # type: ignore[assignment]
+        record.last_used_at = datetime.now(timezone.utc)  # type: ignore[assignment]
         session.commit()
 
 
 def verify_admin_key(
-    x_admin_api_key: Annotated[
-        str | None, Header(alias="X-Admin-API-Key")
-    ] = None,
+    x_admin_api_key: Annotated[str | None, Header(alias="X-Admin-API-Key")] = None,
 ) -> None:
     """Gate admin-only endpoints with `FITSCAN_ADMIN_API_KEY`.
 
@@ -110,9 +109,7 @@ def verify_admin_key(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="FITSCAN_ADMIN_API_KEY is not configured.",
         )
-    if not x_admin_api_key or not hmac.compare_digest(
-        x_admin_api_key, expected
-    ):
+    if not x_admin_api_key or not hmac.compare_digest(x_admin_api_key, expected):
         # Constant-time fallback to keep the failure path
         # indistinguishable from the success-then-mismatch path.
         secrets.compare_digest("", expected)

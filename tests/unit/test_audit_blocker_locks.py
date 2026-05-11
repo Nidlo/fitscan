@@ -110,9 +110,9 @@ class TestH13MeshRescaling:
         anatomically wrong even if the height is right."""
         original_verts = np.array(
             [
-                [-0.4, 0.0, 0.0],   # left foot
-                [0.4, 0.0, 0.0],    # right foot
-                [0.0, 1.7, 0.0],    # head
+                [-0.4, 0.0, 0.0],  # left foot
+                [0.4, 0.0, 0.0],  # right foot
+                [0.0, 1.7, 0.0],  # head
             ]
         )
         mesh = SimpleNamespace(

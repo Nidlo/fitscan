@@ -32,8 +32,7 @@ from fitscan.validation.claude_validator import ClaudeValidator
 def _pose_with_visibilities(viz: dict[str, float]) -> BodyPose:
     return BodyPose(
         keypoints={
-            name: Keypoint(x=0.5, y=0.5, z=0.0, visibility=v)
-            for name, v in viz.items()
+            name: Keypoint(x=0.5, y=0.5, z=0.0, visibility=v) for name, v in viz.items()
         },
         image_width=400,
         image_height=800,
@@ -53,10 +52,10 @@ class TestFindOccludedLandmarks:
     def test_flags_landmarks_below_threshold(self):
         pose = _pose_with_visibilities(
             {
-                "left_shoulder": 0.9,   # visible
+                "left_shoulder": 0.9,  # visible
                 "right_shoulder": 0.1,  # occluded
-                "left_hip": 0.05,       # occluded
-                "right_hip": 0.95,      # visible
+                "left_hip": 0.05,  # occluded
+                "right_hip": 0.95,  # visible
             }
         )
         result = PoseDetector.find_occluded_landmarks(pose)
@@ -68,9 +67,7 @@ class TestFindOccludedLandmarks:
         assert PoseDetector.find_occluded_landmarks(pose) == []
 
     def test_custom_threshold(self):
-        pose = _pose_with_visibilities(
-            {"left_shoulder": 0.4, "right_shoulder": 0.6}
-        )
+        pose = _pose_with_visibilities({"left_shoulder": 0.4, "right_shoulder": 0.6})
         # Stricter threshold → both occluded
         assert PoseDetector.find_occluded_landmarks(pose, threshold=0.7) == [
             "left_shoulder",
@@ -122,10 +119,10 @@ class TestClaudeVerifyLandmarks:
                 class _Content:
                     text = (
                         '{"verifications": {'
-                        '"left_hip": {"verdict": "visible_at_xy", "x": 0.42, "y": 0.55},'
-                        '"right_shoulder": {"verdict": "pose_estimate", "x": 0.6, "y": 0.22},'
-                        '"left_wrist": {"verdict": "occluded_unrecoverable", "x": null, "y": null}'
-                        '}}'
+                        '"left_hip": {"verdict": "visible_at_xy", "x": 0.42, "y": 0.55},'  # noqa: E501
+                        '"right_shoulder": {"verdict": "pose_estimate", "x": 0.6, "y": 0.22},'  # noqa: E501
+                        '"left_wrist": {"verdict": "occluded_unrecoverable", "x": null, "y": null}'  # noqa: E501
+                        "}}"
                     )
 
                 class _Resp:
@@ -138,6 +135,7 @@ class TestClaudeVerifyLandmarks:
                 self.messages = _FakeMessages()
 
         import anthropic
+
         monkeypatch.setattr(anthropic, "Anthropic", _FakeAnthropic)
 
         validator = ClaudeValidator(api_key="YOUR_FAKE_ANT_KEY_for_consent_gate_tests")
@@ -171,9 +169,9 @@ class TestClaudeVerifyLandmarks:
                 class _Content:
                     text = (
                         '{"verifications": {'
-                        '"left_hip": {"verdict": "made_up_verdict", "x": 0.4, "y": 0.5},'
+                        '"left_hip": {"verdict": "made_up_verdict", "x": 0.4, "y": 0.5},'  # noqa: E501
                         '"right_hip": {"verdict": "visible_at_xy", "x": 0.6, "y": 0.5}'
-                        '}}'
+                        "}}"
                     )
 
                 class _Resp:
@@ -186,6 +184,7 @@ class TestClaudeVerifyLandmarks:
                 self.messages = _FakeMessages()
 
         import anthropic
+
         monkeypatch.setattr(anthropic, "Anthropic", _FakeAnthropic)
 
         validator = ClaudeValidator(api_key="YOUR_FAKE_ANT_KEY_for_consent_gate_tests")
@@ -209,6 +208,7 @@ class TestClaudeVerifyLandmarks:
                 self.messages = _FakeMessages()
 
         import anthropic
+
         monkeypatch.setattr(anthropic, "Anthropic", _FakeAnthropic)
 
         validator = ClaudeValidator(api_key="YOUR_FAKE_ANT_KEY_for_consent_gate_tests")
@@ -337,9 +337,7 @@ class TestPipelineOrchestratorVerification:
                 )
 
         # Pose with one occluded landmark — but Claude is OFF
-        pose = _pose_with_visibilities(
-            {"left_shoulder": 0.9, "right_hip": 0.1}
-        )
+        pose = _pose_with_visibilities({"left_shoulder": 0.9, "right_hip": 0.1})
         pipeline = self._build_pipeline(
             claude_validator=_StubClaude(),
             enable_claude=False,
@@ -373,9 +371,7 @@ class TestPipelineOrchestratorVerification:
                 )
 
         # All landmarks above threshold
-        pose = _pose_with_visibilities(
-            {"left_shoulder": 0.9, "right_hip": 0.85}
-        )
+        pose = _pose_with_visibilities({"left_shoulder": 0.9, "right_hip": 0.85})
         pipeline = self._build_pipeline(
             claude_validator=_StubClaude(),
             enable_claude=True,
@@ -419,9 +415,7 @@ class TestPipelineOrchestratorVerification:
                     raw_response="",
                 )
 
-        pose = _pose_with_visibilities(
-            {"left_shoulder": 0.9, "right_hip": 0.1}
-        )
+        pose = _pose_with_visibilities({"left_shoulder": 0.9, "right_hip": 0.1})
         pipeline = self._build_pipeline(
             claude_validator=_StubClaude(),
             enable_claude=True,
@@ -467,6 +461,7 @@ class TestApiSchemaLandmarkVerification:
             },
         )
         dumped = resp.model_dump()
-        assert dumped["landmark_verification"]["verdicts"]["left_hip"][
-            "verdict"
-        ] == "visible_at_xy"
+        assert (
+            dumped["landmark_verification"]["verdicts"]["left_hip"]["verdict"]
+            == "visible_at_xy"
+        )

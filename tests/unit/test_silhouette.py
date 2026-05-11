@@ -1,6 +1,6 @@
 """Tests for silhouette measurement functions."""
+
 import numpy as np
-import pytest
 
 from fitscan.cv_pipeline.silhouette import (
     SilhouetteMeasurer,
@@ -48,9 +48,7 @@ class TestSilhouetteMeasurer:
             image_width=400,
             image_height=800,
         )
-        scale = ScaleFactor(
-            pixels_per_cm=5.0, source="test", confidence=1.0
-        )
+        scale = ScaleFactor(pixels_per_cm=5.0, source="test", confidence=1.0)
         result = measurer.measure(mask, pose, scale)
         assert result.source == "silhouette"
         assert result.gender_profile == "ladies"

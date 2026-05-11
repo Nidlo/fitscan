@@ -66,9 +66,7 @@ def iter_jsonl(path: str | Path) -> Iterator[CorrectionExample]:
             try:
                 payload = json.loads(stripped)
             except json.JSONDecodeError as e:
-                raise ValueError(
-                    f"Invalid JSON at {p}:{lineno}: {e.msg}"
-                ) from e
+                raise ValueError(f"Invalid JSON at {p}:{lineno}: {e.msg}") from e
             yield _from_dict(payload, source=f"{p}:{lineno}")
 
 

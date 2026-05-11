@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Header
 
 from .dependencies import verify_admin_key
 
@@ -60,7 +60,7 @@ def _gather_celery_status() -> dict[str, Any]:
 
         broker_url = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
         client = Redis.from_url(broker_url, socket_connect_timeout=1.5)
-        queue_depth = int(client.llen("celery"))
+        queue_depth = cast(int, client.llen("celery"))
     except Exception:  # noqa: BLE001
         broker_reachable = False
         queue_depth = None
@@ -84,9 +84,7 @@ def _gather_celery_status() -> dict[str, Any]:
 
 @router.get("/celery/status", dependencies=[])
 def celery_status(
-    x_admin_api_key: Annotated[
-        str | None, Header(alias="X-Admin-API-Key")
-    ] = None,
+    x_admin_api_key: Annotated[str | None, Header(alias="X-Admin-API-Key")] = None,
 ) -> dict[str, Any]:
     """FS-NIDLO-OPS-01 / QA-AD-OPS-010 — Returns worker + queue + beat
     health for the Nidlo admin's Operations panel. Read-only."""
@@ -100,13 +98,13 @@ def _gather_usage(start: datetime, end: datetime) -> dict[str, Any]:
     don't want to ship them all to Python just to take a median."""
     from sqlalchemy import case, func
 
+    # Use a session for read-only aggregation.
+    from sqlalchemy.orm import Session
+
     from fitscan.infrastructure.result_store import (
         MeasurementRunRecord,
         engine,
     )
-
-    # Use a session for read-only aggregation.
-    from sqlalchemy.orm import Session
 
     with Session(engine) as session:
         base = session.query(MeasurementRunRecord).filter(
@@ -211,9 +209,7 @@ def _gather_usage(start: datetime, end: datetime) -> dict[str, Any]:
             .offset(p95_offset)
             .first()
         )
-        p95_latency_ms = (
-            int(p95_row.latency_ms) if p95_row is not None else None
-        )
+        p95_latency_ms = int(p95_row.latency_ms) if p95_row is not None else None
 
         return {
             "from": start.isoformat(),
@@ -230,9 +226,7 @@ def _gather_usage(start: datetime, end: datetime) -> dict[str, Any]:
 
 @router.get("/usage")
 def usage(
-    x_admin_api_key: Annotated[
-        str | None, Header(alias="X-Admin-API-Key")
-    ] = None,
+    x_admin_api_key: Annotated[str | None, Header(alias="X-Admin-API-Key")] = None,
     days: int = 30,
 ) -> dict[str, Any]:
     """FS-NIDLO-OPS-01 / QA-AD-RPT-006 — Per-day measurement counts +

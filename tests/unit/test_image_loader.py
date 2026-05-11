@@ -1,4 +1,5 @@
 """Tests for image loader."""
+
 import numpy as np
 import pytest
 

@@ -4,6 +4,7 @@ Numerical regression tests for ScaleCalibrator.
 These tests pin the exact arithmetic of the scale formula so measurement drift
 is caught immediately. Tolerances are ±1% unless noted.
 """
+
 import numpy as np
 import pytest
 
@@ -41,9 +42,9 @@ class TestScaleCalibrator:
         """
         pose = make_pose(head_y=0.05, ankle_y=0.95, img_h=1000)
         scale = self.calibrator.calibrate_from_height(pose, 175.0)
-        assert abs(scale.pixels_per_cm - 5.50) < 0.10, (
-            f"Expected ~5.50 px/cm, got {scale.pixels_per_cm:.4f}"
-        )
+        assert (
+            abs(scale.pixels_per_cm - 5.50) < 0.10
+        ), f"Expected ~5.50 px/cm, got {scale.pixels_per_cm:.4f}"
         assert scale.source == "user_height"
         assert scale.confidence == 0.90
 
@@ -53,9 +54,9 @@ class TestScaleCalibrator:
         scale = self.calibrator.calibrate_from_height(pose, 160.0)
         # pixel height = (0.96 - 0.05) * 800 * 1.07 ≈ 778.2 px
         # px_per_cm = 778.2 / 160 ≈ 4.86
-        assert abs(scale.pixels_per_cm - 4.86) < 0.10, (
-            f"Expected ~4.86 px/cm, got {scale.pixels_per_cm:.4f}"
-        )
+        assert (
+            abs(scale.pixels_per_cm - 4.86) < 0.10
+        ), f"Expected ~4.86 px/cm, got {scale.pixels_per_cm:.4f}"
 
     def test_calibrate_from_height_consistency(self):
         """Same inputs always produce the same result (deterministic)."""
@@ -81,9 +82,9 @@ class TestScaleCalibrator:
         pose = make_pose(head_y=0.05, ankle_y=0.95, img_h=1000)
         scale = self.calibrator.calibrate_from_height(pose, 175.0)
         # Must be above the uncorrected value of ≈5.20
-        assert scale.pixels_per_cm > 5.20, (
-            "HEAD_CORRECTION_FACTOR not applied — scale too low"
-        )
+        assert (
+            scale.pixels_per_cm > 5.20
+        ), "HEAD_CORRECTION_FACTOR not applied — scale too low"
 
     def test_raises_on_implausible_height(self):
         pose = make_pose()
@@ -121,9 +122,9 @@ class TestScaleCalibrator:
         """
         img = self._make_rect_image(rect_px=200)
         scale = self.calibrator.calibrate_from_reference_object(img, object_cm=20.0)
-        assert abs(scale.pixels_per_cm - 10.0) < 0.6, (
-            f"Expected ~10.0 px/cm, got {scale.pixels_per_cm:.4f}"
-        )
+        assert (
+            abs(scale.pixels_per_cm - 10.0) < 0.6
+        ), f"Expected ~10.0 px/cm, got {scale.pixels_per_cm:.4f}"
         assert scale.source == "reference_object"
         assert scale.confidence == 0.95
 

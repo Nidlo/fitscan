@@ -8,8 +8,6 @@ shape without flipping the QA row red.
 
 from __future__ import annotations
 
-import os
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -141,15 +139,14 @@ class TestUsageAuth:
 
 
 class TestUsageShape:
-    def test_returns_zero_state_when_no_runs_recorded(
-        self, client: TestClient
-    ) -> None:
+    def test_returns_zero_state_when_no_runs_recorded(self, client: TestClient) -> None:
         # Ensure measurement_runs is empty in the test DB.
+        from sqlalchemy.orm import Session
+
         from fitscan.infrastructure.result_store import (
             MeasurementRunRecord,
             engine,
         )
-        from sqlalchemy.orm import Session
 
         with Session(engine) as session:
             session.query(MeasurementRunRecord).delete()
@@ -170,16 +167,15 @@ class TestUsageShape:
         assert body["by_day"] == []
         assert body["by_error_kind"] == []
 
-    def test_aggregates_seeded_runs_correctly(
-        self, client: TestClient
-    ) -> None:
+    def test_aggregates_seeded_runs_correctly(self, client: TestClient) -> None:
         from datetime import datetime, timedelta, timezone
+
+        from sqlalchemy.orm import Session
 
         from fitscan.infrastructure.result_store import (
             MeasurementRunRecord,
             engine,
         )
-        from sqlalchemy.orm import Session
 
         with Session(engine) as session:
             session.query(MeasurementRunRecord).delete()
@@ -227,9 +223,7 @@ class TestUsageShape:
         kinds = {row["error_kind"]: row["count"] for row in body["by_error_kind"]}
         assert kinds.get("validation") == 1
 
-    def test_clamps_days_window_to_safe_range(
-        self, client: TestClient
-    ) -> None:
+    def test_clamps_days_window_to_safe_range(self, client: TestClient) -> None:
         # ?days=10000 must clamp; nobody needs a 27-year history page.
         response = client.get(
             "/api/v1/admin/usage?days=10000",

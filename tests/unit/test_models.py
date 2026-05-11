@@ -1,4 +1,5 @@
 """Tests for domain models."""
+
 from fitscan.domain.models import BodyMeasurements, SingleMeasurement
 
 

@@ -74,7 +74,8 @@ class MeasurementsResponse(BaseModel):
     # detector flagged as low-visibility. Populated only when the pipeline
     # detected occluded landmarks AND a `subject_id` consent token was
     # provided. Shape:
-    #   {"verdicts": {<landmark_name>: {"verdict": str, "x": float|null, "y": float|null}}}
+    #   {"verdicts": {<landmark_name>:
+    #       {"verdict": str, "x": float|null, "y": float|null}}}
     # Verdict values: visible_at_xy | pose_estimate | occluded_unrecoverable.
     landmark_verification: Optional[dict] = None
     # S2.5 — Per-landmark normalized coordinates (0-1) from MediaPipe pose

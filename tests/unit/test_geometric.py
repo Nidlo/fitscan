@@ -5,6 +5,7 @@ Each test pins exact expected values computed analytically from the input
 keypoints and scale. Tolerances are ±0.2 cm to catch formula drift while
 tolerating Python float arithmetic.
 """
+
 import math
 
 import pytest
@@ -55,9 +56,9 @@ class TestGeometricMeasurerRegression:
         """
         result = self.measurer.measure(make_standard_pose(), SCALE_5)
         assert result.shoulder_cm is not None
-        assert abs(result.shoulder_cm.value_cm - 40.0) < 0.2, (
-            f"Expected 40.0 cm, got {result.shoulder_cm.value_cm}"
-        )
+        assert (
+            abs(result.shoulder_cm.value_cm - 40.0) < 0.2
+        ), f"Expected 40.0 cm, got {result.shoulder_cm.value_cm}"
         assert result.shoulder_cm.source == "geometric"
         assert result.source == "geometric"
 
@@ -65,17 +66,17 @@ class TestGeometricMeasurerRegression:
         """Vertical distance: |y_hip - y_shoulder| = 400 px / 5.0 = 80.0 cm."""
         result = self.measurer.measure(make_standard_pose(), SCALE_5)
         assert result.shoulder_to_hip_cm is not None
-        assert abs(result.shoulder_to_hip_cm.value_cm - 80.0) < 0.2, (
-            f"Expected 80.0 cm, got {result.shoulder_to_hip_cm.value_cm}"
-        )
+        assert (
+            abs(result.shoulder_to_hip_cm.value_cm - 80.0) < 0.2
+        ), f"Expected 80.0 cm, got {result.shoulder_to_hip_cm.value_cm}"
 
     def test_shoulder_to_waist_is_60_percent_of_hip(self):
         """Waist proxy = 60 % of shoulder_to_hip → 48.0 cm."""
         result = self.measurer.measure(make_standard_pose(), SCALE_5)
         assert result.shoulder_to_waist_cm is not None
-        assert abs(result.shoulder_to_waist_cm.value_cm - 48.0) < 0.2, (
-            f"Expected 48.0 cm, got {result.shoulder_to_waist_cm.value_cm}"
-        )
+        assert (
+            abs(result.shoulder_to_waist_cm.value_cm - 48.0) < 0.2
+        ), f"Expected 48.0 cm, got {result.shoulder_to_waist_cm.value_cm}"
 
     def test_sleeve_length_exact(self):
         """
@@ -86,9 +87,9 @@ class TestGeometricMeasurerRegression:
         expected_cm = expected_px / 5.0
         result = self.measurer.measure(make_standard_pose(), SCALE_5)
         assert result.sleeve_length_cm is not None
-        assert abs(result.sleeve_length_cm.value_cm - expected_cm) < 0.2, (
-            f"Expected {expected_cm:.1f} cm, got {result.sleeve_length_cm.value_cm}"
-        )
+        assert (
+            abs(result.sleeve_length_cm.value_cm - expected_cm) < 0.2
+        ), f"Expected {expected_cm:.1f} cm, got {result.sleeve_length_cm.value_cm}"
 
     def test_scale_proportionality(self):
         """Doubling px/cm halves all centimetre measurements."""
@@ -99,9 +100,7 @@ class TestGeometricMeasurerRegression:
         assert result_5.shoulder_cm is not None
         assert result_10.shoulder_cm is not None
         ratio = result_5.shoulder_cm.value_cm / result_10.shoulder_cm.value_cm
-        assert abs(ratio - 2.0) < 0.05, (
-            f"Expected 2× ratio, got {ratio:.4f}"
-        )
+        assert abs(ratio - 2.0) < 0.05, f"Expected 2× ratio, got {ratio:.4f}"
 
     def test_confidence_values_are_correct(self):
         result = self.measurer.measure(make_standard_pose(), SCALE_5)

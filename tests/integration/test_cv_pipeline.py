@@ -2,10 +2,12 @@
 Integration tests using synthetic test images.
 These images are generated programmatically — no external dataset required.
 """
+
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pytest
-from pathlib import Path
 
 from fitscan.cv_pipeline.preprocessor import ImagePreprocessor
 from fitscan.infrastructure.image_loader import ImageLoader
@@ -19,12 +21,8 @@ def create_test_image(height_px=800, width_px=400) -> np.ndarray:
     cv2.rectangle(img, (cx - 50, 130), (cx + 50, 380), (80, 100, 160), -1)
     cv2.rectangle(img, (cx - 55, 380), (cx + 5, 700), (80, 100, 160), -1)
     cv2.rectangle(img, (cx + 5, 380), (cx + 55, 700), (80, 100, 160), -1)
-    cv2.rectangle(
-        img, (cx - 100, 130), (cx - 50, 330), (80, 100, 160), -1
-    )
-    cv2.rectangle(
-        img, (cx + 50, 130), (cx + 100, 330), (80, 100, 160), -1
-    )
+    cv2.rectangle(img, (cx - 100, 130), (cx - 50, 330), (80, 100, 160), -1)
+    cv2.rectangle(img, (cx + 50, 130), (cx + 100, 330), (80, 100, 160), -1)
     return img
 
 

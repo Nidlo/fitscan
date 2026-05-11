@@ -83,9 +83,7 @@ class Settings(BaseSettings):
         """Parse `cors_origins` into the list FastAPI's CORSMiddleware
         wants. Empty values stripped; `*` left intact for dev."""
         return [
-            origin.strip()
-            for origin in self.cors_origins.split(",")
-            if origin.strip()
+            origin.strip() for origin in self.cors_origins.split(",") if origin.strip()
         ]
 
     @property

@@ -61,10 +61,12 @@ Respond with ONLY this JSON shape:
 Rules:
 - body_shape: pick exactly one of the five values
 - body_shape_confidence: float 0-1; lower it if measurements are sparse
-- color_palette: 4-8 hex strings; bias toward earthy / warm tones for African textiles
+- color_palette: 4-8 hex strings; bias toward earthy / warm tones
+  for African textiles
 - fabric_recommendations: 3-5 lowercase fabric names common to West African fashion
 - flattering_silhouettes: 3-5 short descriptors
-- recommended_specializations: 1-3 slugs from the list above (or empty array if none fit)
+- recommended_specializations: 1-3 slugs from the list above
+  (or empty array if none fit)
 - summary: 2-4 sentences, second-person ("Your shape...")
 """
 

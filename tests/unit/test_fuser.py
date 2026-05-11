@@ -1,16 +1,13 @@
 """Tests for measurement fusion."""
+
 import pytest
 
 from fitscan.domain.models import BodyMeasurements, SingleMeasurement
 from fitscan.fusion.fuser import MeasurementFuser
 
 
-def make_measurement(
-    value: float, confidence: float, source: str
-) -> SingleMeasurement:
-    return SingleMeasurement(
-        value_cm=value, confidence=confidence, source=source
-    )
+def make_measurement(value: float, confidence: float, source: str) -> SingleMeasurement:
+    return SingleMeasurement(value_cm=value, confidence=confidence, source=source)
 
 
 class TestMeasurementFuser:

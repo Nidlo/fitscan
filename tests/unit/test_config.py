@@ -1,5 +1,4 @@
 """Tests for configuration module."""
-import os
 
 from fitscan.config import Settings, get_settings
 

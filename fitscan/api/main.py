@@ -2,9 +2,11 @@
 
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 # Pillow's default DOS guard is conservative; tighten it to twice the
@@ -25,6 +27,7 @@ from fitscan.config import get_settings
 from .admin_routes import router as admin_router
 from .routes import router
 from .style import router as style_router
+
 
 # FS-NIDLO-OPS-01 — Sentry init. No-op when SENTRY_DSN is unset (dev /
 # test / fresh installs that haven't provisioned a Sentry project yet),
@@ -75,7 +78,8 @@ async def _lifespan(app: FastAPI):
         removed = sweep_upload_tempdir()
         if removed:
             logger.info(
-                "upload_tempdir_sweep removed={removed} stale tempfiles", removed=removed
+                "upload_tempdir_sweep removed={removed} stale tempfiles",
+                removed=removed,
             )
     except Exception as e:  # noqa: BLE001 — best-effort, never block startup
         logger.warning("upload_tempdir_sweep failed: {err}", err=str(e))
@@ -107,8 +111,6 @@ app.include_router(style_router)
 # the auth gate is a different shared secret (X-Admin-API-Key, not the
 # per-tenant X-API-Key).
 app.include_router(admin_router)
-from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 
 # Serve API documentation at /api-docs
 _docs_dir = Path(__file__).parent.parent.parent / "docs"

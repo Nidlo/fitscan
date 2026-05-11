@@ -1,4 +1,5 @@
 """Tests for rule-based validation."""
+
 import numpy as np
 
 from fitscan.domain.models import BodyMeasurements, SingleMeasurement

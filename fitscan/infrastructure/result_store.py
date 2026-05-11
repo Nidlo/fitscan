@@ -88,8 +88,12 @@ class MeasurementRunRecord(Base):
     error_kind = Column(String(32), nullable=True)
 
 
-# Create tables on import (for SQLite dev mode)
-Base.metadata.create_all(engine)
+# Create tables on import (for SQLite dev mode + the unit-test sqlite path
+# that doesn't go through alembic). Suppress with FITSCAN_AUTO_CREATE_TABLES=false
+# when alembic is the source of truth (set by alembic/env.py and CI's
+# integration env so migrations can autogenerate against an empty DB).
+if os.getenv("FITSCAN_AUTO_CREATE_TABLES", "true").lower() != "false":
+    Base.metadata.create_all(engine)
 
 
 def record_measurement_run(
@@ -102,9 +106,7 @@ def record_measurement_run(
     can never bring down the /measure response — the report is nice to
     have, the actual measurement is the product."""
     try:
-        latency_ms = max(
-            0, int((completed_at - started_at).total_seconds() * 1000)
-        )
+        latency_ms = max(0, int((completed_at - started_at).total_seconds() * 1000))
         with Session(engine) as session:
             session.add(
                 MeasurementRunRecord(

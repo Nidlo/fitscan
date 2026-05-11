@@ -6,7 +6,6 @@ Tests are hermetic — `pipeline.run_with_mesh` is mocked.
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock
 
 from fitscan.application.measurement_service import MeasurementService
