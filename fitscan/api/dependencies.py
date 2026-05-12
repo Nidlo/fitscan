@@ -33,13 +33,19 @@ def _api_key_required() -> bool:
 
     Set FITSCAN_REQUIRE_API_KEY=false in the test env or for trusted-network
     bypass. Production must leave this unset (defaults to true).
+
+    Reads `os.environ` first so tests using `monkeypatch.setenv` win over
+    the lru-cached Settings instance, then falls back to the Settings field
+    (which is the only path that sees `.env` values — see config.py and
+    _check_admin_key for the matching pattern).
     """
-    return os.getenv("FITSCAN_REQUIRE_API_KEY", "true").lower() not in (
-        "false",
-        "0",
-        "no",
-        "off",
-    )
+    raw = os.getenv("FITSCAN_REQUIRE_API_KEY")
+    if raw is not None:
+        return raw.lower() not in ("false", "0", "no", "off")
+
+    from fitscan.config import get_settings  # local import — avoids cold-start cost
+
+    return get_settings().fitscan_require_api_key
 
 
 def verify_api_key(

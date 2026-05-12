@@ -79,6 +79,15 @@ class Settings(BaseSettings):
     # Production MUST keep this false.
     fitscan_allow_unauthed_localhost: bool = False
 
+    # DEV/TEST — turn off the per-tenant X-API-Key gate on /api/v1/*
+    # endpoints (measurement, style classification). Production MUST
+    # leave this true so callers must present a valid registered key.
+    # Read via this Settings field rather than os.getenv-only because
+    # the worker loads .env exclusively through pydantic Settings (we
+    # don't push values into os.environ — see _check_admin_key for
+    # the same rationale).
+    fitscan_require_api_key: bool = True
+
     # Dedicated tempdir for streamed measurement uploads. Living under
     # its own root (rather than the system /tmp) lets us sweep stale
     # files on app startup without risking deleting unrelated tempfiles.

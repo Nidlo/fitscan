@@ -10,7 +10,12 @@ dependencies = [
     "torch>=2.1.0",
     "torchvision>=0.16.0",
     "opencv-python>=4.8.0",
-    "mediapipe>=0.10.0",
+    # Pin below 0.10.21 — that release dropped the `mediapipe.solutions`
+    # namespace in favour of the new Tasks API. `cv_pipeline/pose_detector.py`
+    # still consumes `mp.solutions.pose`, so let the dep float forward only
+    # within the compatible range. Migration to `mediapipe.tasks.vision`
+    # is a separate, deliberate sprint.
+    "mediapipe>=0.10.9,<0.10.21",
     "rembg>=2.0.50",
     "trimesh[easy]>=4.0.0",
     "numpy>=1.26.0",
