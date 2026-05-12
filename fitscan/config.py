@@ -69,6 +69,16 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     sentry_traces_sample_rate: float = 0.1
 
+    # FS-NIDLO-OPS-12 — admin shared secret for /api/v1/admin/* and
+    # /api/v1/keys/register. Set to a long random hex via
+    # `python -m fitscan.cli set-admin-key <KEY>` or by hand.
+    fitscan_admin_api_key: str = ""
+
+    # FS-NIDLO-OPS-12 — DEV-ONLY loopback bypass. When true, requests
+    # from 127.0.0.1 / localhost / ::1 don't need X-Admin-API-Key.
+    # Production MUST keep this false.
+    fitscan_allow_unauthed_localhost: bool = False
+
     # Dedicated tempdir for streamed measurement uploads. Living under
     # its own root (rather than the system /tmp) lets us sweep stale
     # files on app startup without risking deleting unrelated tempfiles.

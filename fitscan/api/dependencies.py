@@ -103,14 +103,33 @@ def _check_admin_key(
     or missing. Handles the FITSCAN_ALLOW_UNAUTHED_LOCALHOST bypass
     when `client_host` is supplied. Used by both the FastAPI
     dependency below and the route handlers' inline calls.
-    """
-    if client_host is not None and os.getenv(
-        "FITSCAN_ALLOW_UNAUTHED_LOCALHOST", "false"
-    ).lower() in ("true", "1", "yes", "on"):
-        if _is_localhost(client_host):
-            return
 
-    expected = os.getenv("FITSCAN_ADMIN_API_KEY", "")
+    Reads via pydantic `Settings` (which loads `.env` directly via
+    `model_config.env_file`). We deliberately don't push `.env`
+    into `os.environ` because the repo's `DATABASE_URL` placeholder
+    breaks dev hosts that haven't provisioned a `fitscan` Postgres
+    role yet — Settings keeps each consumer isolated from the
+    others. We fall back to `os.getenv` so existing tests that
+    use `monkeypatch.setenv` keep working.
+    """
+    from fitscan.config import get_settings  # local import — avoids cold-start cost
+
+    settings = get_settings()
+
+    # `monkeypatch.setenv` in tests + pydantic's `.env` reader both
+    # populate `Settings`. But `os.getenv` is the only source visible
+    # when env is set AFTER `Settings()` was first constructed
+    # (`@lru_cache` keeps the first instance). Check os.environ first
+    # so tests that monkeypatch don't have to bust the cache.
+    bypass_enabled = (
+        os.getenv("FITSCAN_ALLOW_UNAUTHED_LOCALHOST", "").lower()
+        in ("true", "1", "yes", "on")
+        or settings.fitscan_allow_unauthed_localhost
+    )
+    if client_host is not None and bypass_enabled and _is_localhost(client_host):
+        return
+
+    expected = os.getenv("FITSCAN_ADMIN_API_KEY", "") or settings.fitscan_admin_api_key
     if not expected:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
