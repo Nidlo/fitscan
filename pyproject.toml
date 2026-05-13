@@ -9,16 +9,28 @@ requires-python = ">=3.11"
 dependencies = [
     "torch>=2.1.0",
     "torchvision>=0.16.0",
-    "opencv-python>=4.8.0",
+    # opencv 4.11+ pins numpy>=2; we're stuck on numpy<2 because mediapipe
+    # 0.10.20 (the last version with the `solutions` API we depend on) pins
+    # numpy<2. Cap opencv until the mediapipe Tasks-API migration lands.
+    "opencv-python>=4.8.0,<4.11",
     # Pin below 0.10.21 — that release dropped the `mediapipe.solutions`
     # namespace in favour of the new Tasks API. `cv_pipeline/pose_detector.py`
     # still consumes `mp.solutions.pose`, so let the dep float forward only
     # within the compatible range. Migration to `mediapipe.tasks.vision`
     # is a separate, deliberate sprint.
     "mediapipe>=0.10.9,<0.10.21",
-    "rembg>=2.0.50",
+    # rembg 2.0.60+ pins numpy>=2.3 (incompatible with our mediapipe pin).
+    # The `[cpu]` extra pulls in `onnxruntime` — without it `new_session()`
+    # calls sys.exit(1) and the preprocessor falls back to a threshold mask
+    # that includes background + clothes (poisons every silhouette).
+    "rembg[cpu]>=2.0.50,<2.0.60",
+    # onnxruntime 1.20+ pins numpy>=2 transitively via its build wheels.
+    # 1.19.x still supports numpy 1.x; matches our rembg + mediapipe pins.
+    "onnxruntime>=1.17,<1.20",
     "trimesh[easy]>=4.0.0",
-    "numpy>=1.26.0",
+    # numpy<2 is forced by the mediapipe 0.10.20 pin. Bumping mediapipe to
+    # the Tasks-API generation will unlock numpy 2.x across the stack.
+    "numpy>=1.26.0,<2",
     "scipy>=1.11.0",
     "scikit-image>=0.22.0",
     "shapely>=2.0.0",
