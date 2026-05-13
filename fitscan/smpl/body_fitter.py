@@ -41,14 +41,26 @@ class SMPLBodyFitter:
         if self._model is not None:
             return
         try:
-            from hmr2.models import HMR2
+            # Use the package's own loader — it pulls the matching
+            # `model_config.yaml` from the checkpoint's parent dir and applies
+            # the BBOX_SHAPE / IMAGE_SIZE overrides the model needs. The bare
+            # `HMR2.load_from_checkpoint(strict=False)` loaded the weights but
+            # left the config as defaults, which produced meshes with broken
+            # proportions — the symptom the user saw as bicep > waist > bust.
+            # `torch.load`'s `weights_only=False` is set globally in
+            # `fitscan/__init__.py` so this load path doesn't have to
+            # enumerate every omegaconf internal for add_safe_globals.
+            from hmr2.models import DEFAULT_CHECKPOINT, load_hmr2
 
-            self._model = HMR2.load_from_checkpoint(
-                str(self.checkpoint_path), strict=False
+            checkpoint_path = (
+                str(self.checkpoint_path)
+                if self.checkpoint_path.exists()
+                else DEFAULT_CHECKPOINT
             )
+            self._model, self._model_cfg = load_hmr2(checkpoint_path)
             self._model = self._model.to(self.device)
             self._model.eval()
-            logger.info(f"HMR2.0 loaded on {self.device}")
+            logger.info(f"HMR2.0 loaded on {self.device} from {checkpoint_path}")
         except ImportError:
             logger.warning("HMR2 not installed. Falling back to SMPLify.")
             self._model = "smplify_fallback"
