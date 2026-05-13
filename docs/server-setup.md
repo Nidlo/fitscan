@@ -1,8 +1,17 @@
 # Fitscan server setup
 
-Per-server runbook for getting Fitscan **fully working** on a fresh box — not just running, but with all features (Claude vision validation, SMPL body fitting, avatar generation) actually enabled.
+Per-server runbook for getting Fitscan **fully working** on a fresh box.
 
-If you're standing up a brand-new server, follow [`warp/docs/deploy-runbook.md`](https://github.com/Nidlo/warp/blob/development/docs/deploy-runbook.md) Phase B first to provision the OS / Python / Postgres / systemd, then come back here for the env audit + ML model dance.
+If you're standing up a brand-new server, follow [`warp/docs/deploy-runbook.md`](https://github.com/Nidlo/warp/blob/development/docs/deploy-runbook.md) Phase B first to provision the OS / Python / Postgres / systemd, then come back here for the env audit.
+
+> **Sprint 36 simplification (May 2026).** Body measurement now runs through Claude Vision only — the previous SMPL + HMR2 stack was dropped from the measurement path because it was inflating circumferences 30-50% on diverse body types. The 2GB ML-model download is **no longer required** for the `/api/v1/measure` endpoint. You only need it if you're deploying `/measure/avatar` (the optional 3D-GLB render route).
+>
+> Minimum viable measurement deploy needs four env vars:
+> `ANTHROPIC_API_KEY` (console.anthropic.com, pay-per-token, ~$0.07/scan),
+> `DATABASE_URL` (Postgres), `FITSCAN_ADMIN_API_KEY` (for admin endpoints),
+> and on the warp side `MEASUREMENTS_PHOTO_DISK=imagekit` plus ImageKit
+> credentials for stable photo URLs. Skip Section 2 (SMPL + HMR2 setup)
+> entirely unless you need the 3D avatar.
 
 ---
 
@@ -51,15 +60,15 @@ The canonical list lives in [`.env.example`](../.env.example). Below is every va
 
 | Var | Purpose | Default | When to set |
 |---|---|---|---|
-| `SMPL_MODEL_PATH` | Path to SMPL_NEUTRAL.pkl (and optionally _MALE / _FEMALE) | `data/models/smpl/SMPL_NEUTRAL.pkl` | Path is fine as-is; the .pkl file itself needs manual download. See Section 2. |
-| `HMR2_CHECKPOINT_PATH` | Path to HMR2 pose-estimation checkpoint | `data/models/hmr2/epoch=35-step=1000000.ckpt` | Same — path fine, file needs download. See Section 2.2. |
+| `SMPL_MODEL_PATH` | Path to SMPL_NEUTRAL.pkl (and optionally _MALE / _FEMALE) | `data/models/smpl/SMPL_NEUTRAL.pkl` | Path is fine as-is; the .pkl file itself only needs downloading if you deploy `/measure/avatar`. See Section 2. |
+| `HMR2_CHECKPOINT_PATH` | Path to HMR2 pose-estimation checkpoint | `data/models/hmr2/epoch=35-step=1000000.ckpt` | Same — path fine, file only needed for `/measure/avatar`. See Section 2.2. |
 
 ### Feature flags — the big ones
 
 | Var | Purpose | Default | When to set |
 |---|---|---|---|
 | `ENABLE_CLAUDE_VALIDATION` | Use Claude vision to verify low-confidence landmarks | `true` | Requires `ANTHROPIC_API_KEY` set. Leave `false` until the key is provisioned. |
-| `ENABLE_SMPL_FITTING` | Fit a 3D SMPL body to detected landmarks → real circumferences | `true` | Requires SMPL .pkl files on disk. Leave `false` until downloaded. |
+| `ENABLE_SMPL_FITTING` | Fit a 3D SMPL body to detected landmarks. Sprint 36: measurement no longer uses SMPL — flag now ONLY controls whether `/measure/avatar` can produce a mesh. | `false` (Sprint 36 default) | Flip to `true` ONLY when deploying the optional `/measure/avatar` endpoint AND you've downloaded the SMPL + HMR2 weights (Section 2). |
 | `ENABLE_AVATAR_GENERATION` | Export a textured GLB avatar from the fitted body | `true` | Requires both SMPL + HMR2 assets. Leave `false` until both are in place. |
 | `CONFIDENCE_THRESHOLD` | Landmark visibility threshold below which Claude vision is consulted | `0.65` | Tune as you collect data. Lower = more Claude calls = better accuracy but higher cost. |
 | `MAX_IMAGE_SIZE_MB` | Reject uploads larger than this | `10` | Bump if you accept high-res phone photos (modern iPhones can hit 4-5MB at default JPEG quality). |
@@ -110,7 +119,11 @@ The canonical list lives in [`.env.example`](../.env.example). Below is every va
 
 ---
 
-## 2. ML model setup (license-gated, manual)
+## 2. ML model setup (OPTIONAL — only for the 3D-avatar endpoint)
+
+> **Sprint 36:** the SMPL + HMR2 stack was dropped from body measurement; Claude Vision now produces all 24 booth fields directly. The download dance below is only required if you're deploying `/measure/avatar` (the 3D-GLB render route). Body-measurement-only deploys can skip the rest of this section entirely.
+
+License-gated, manual download:
 
 ### 2.1 SMPL — body shape model
 
@@ -249,13 +262,20 @@ curl -sI http://127.0.0.1:8000/api/v1/health | head -2
 
 What "fully working" looks like:
 
+**Measurement-only deploy (Sprint 36 default):**
+
 - All variables from `.env.example` present (none `EMPTY`)
-- SMPL_NEUTRAL.pkl + (optional) SMPL_MALE.pkl + SMPL_FEMALE.pkl in `data/models/smpl/`
-- HMR2 checkpoint in `data/models/hmr2/`
-- `ENABLE_CLAUDE_VALIDATION=true`, `ENABLE_SMPL_FITTING=true`, `ENABLE_AVATAR_GENERATION=true`
+- `ANTHROPIC_API_KEY` set to a Console API key (`sk-ant-api03-…`)
+- `ENABLE_CLAUDE_VALIDATION=true`, `ENABLE_SMPL_FITTING=false`
 - systemd unit `active (running)`
 - Port 8000 listener present
 - Healthcheck returns `200 OK`
+
+**Avatar-enabled deploy (additionally):**
+
+- SMPL_NEUTRAL.pkl + (optional) SMPL_MALE.pkl + SMPL_FEMALE.pkl in `data/models/smpl/`
+- HMR2 checkpoint in `data/models/hmr2/`
+- `ENABLE_SMPL_FITTING=true`, `ENABLE_AVATAR_GENERATION=true`
 
 ---
 
@@ -323,12 +343,12 @@ The CLI tool `python -m fitscan.cli set-admin-key <KEY>` automates the fitscan s
 | Want to... | Run |
 |---|---|
 | Add Anthropic key + enable Claude vision | sed `ANTHROPIC_API_KEY=...` + `ENABLE_CLAUDE_VALIDATION=true` + restart |
-| Enable SMPL fitting | mkdir + scp .pkl files + sed `ENABLE_SMPL_FITTING=true` + restart |
-| Enable avatar generation | Above + HMR2 checkpoint + sed `ENABLE_AVATAR_GENERATION=true` + restart |
+| Enable 3D avatar (optional, post-Sprint-36) | mkdir + scp SMPL .pkl + HMR2 .ckpt files + sed `ENABLE_SMPL_FITTING=true` + `ENABLE_AVATAR_GENERATION=true` + restart |
+| Switch photo storage to ImageKit (warp side) | sed `MEASUREMENTS_PHOTO_DISK=imagekit` + restart `php artisan queue:work` |
 | Rotate admin key | sed on fitscan + both warp envs + restart fitscan + re-cache warp |
 | Audit env state | Run the awk block in Section 4 |
 | Check what fitscan thinks | `journalctl -u fitscan -n 50 --no-pager` |
 
 ---
 
-**Last updated:** 2026-05-12
+**Last updated:** 2026-05-13 (Sprint 36 — Claude-primary measurement, SMPL optional)
