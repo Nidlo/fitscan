@@ -176,16 +176,42 @@ CIRCUMFERENCES (around-body, parallel to ground unless noted):
 WIDTHS / SPANS (straight-line, not around-body):
 - shoulder: tip-to-tip across the back, acromion to acromion.
 - across_back: 10-12cm below the seventh cervical vertebra, between the
-  rear armhole points.
+  rear armhole points. From a front-only photo, approximate as
+  0.90 × shoulder width (the back-armhole points sit slightly inside
+  the shoulder tips).
 - across_chest: same height as across_back but on the front, between the
-  front armhole points.
+  front armhole points. From a front-only photo, approximate as
+  0.85 × shoulder width.
+- nipple_to_nipple: horizontal distance between the two nipple points
+  (also called bust-point span). Adult females average 18-22 cm; men
+  this is typically not measured. Skip if the person is wearing
+  loose / draped clothing that hides the bust points.
+
+CIRCUMFERENCE — partial (around an upper-arm-only ring):
+- around_arm_3_4: circumference at the 3/4-sleeve-line — measured
+  ~6-8cm above the elbow, between the bicep and the elbow joint. Smaller
+  than bicep (typically 0.85-0.92 × bicep on adult females). Use the
+  same width+depth formula as bicep but read width at the 3/4 point,
+  not the bicep peak.
+
+DEPTH MEASUREMENT (needs the SIDE photo; flag low-confidence without it):
+- hip_depth: full front-to-back extent of the hip / seat at the
+  fullest-hip y-position. This is a DEPTH, not a circumference — report
+  the raw depth in cm. From a front-only photo, estimate as
+  0.70 × hip width.
 
 VERTICAL LENGTHS:
 - height_cm: head-top to floor, standing straight (THIS IS THE ANCHOR).
+- shoulder_to_nipple: from the shoulder-tip down the front of the body
+  to the nipple line. Adult females typically 22-28 cm. Critical for
+  bust-darted bodices.
+- shoulder_to_underbust: from the shoulder-tip down the front to the
+  underbust line (where the bra band sits, directly under the bust).
+  Adult females typically 30-36 cm.
 - shoulder_to_waist: shoulder-tip down the front to the natural waist.
+- shoulder_to_hip: shoulder-tip vertically to the fullest-hip y-position.
 - nape_to_waist / back_length: from the seventh cervical vertebra (the
   bump at base of neck) down the spine to the natural waist.
-- shoulder_to_hip: shoulder-tip to fullest-hip y-position.
 - inseam: crotch to ankle bone, INSIDE leg.
 - outseam: natural waist to ankle bone, OUTSIDE leg.
 - waist_to_knee: natural waist to kneecap.
@@ -624,6 +650,7 @@ class ClaudeValidator:
             "underbust": "under_breast_waist_cm",
             "around_arm": "around_arm_cm",
             "bicep": "around_arm_cm",
+            "around_arm_3_4": "around_arm_3_4_cm",
             "wrist": "wrist_cm",
             "neck": "neck_cm",
             "thigh": "thigh_cm",
@@ -632,6 +659,10 @@ class ClaudeValidator:
             "shoulder": "shoulder_cm",
             "across_back": "across_back_cm",
             "across_chest": "across_chest_cm",
+            "nipple_to_nipple": "nipple_to_nipple_cm",
+            "hip_depth": "hip_depth_cm",
+            "shoulder_to_nipple": "shoulder_to_nipple_cm",
+            "shoulder_to_underbust": "shoulder_to_underbust_cm",
             "shoulder_to_waist": "shoulder_to_waist_cm",
             "shoulder_to_hip": "shoulder_to_hip_cm",
             "nape_to_waist": "nape_to_waist_cm",
