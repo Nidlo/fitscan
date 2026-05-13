@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     # Production MUST keep this false.
     fitscan_allow_unauthed_localhost: bool = False
 
+    # Anthropic API key for Claude Vision validation. Read here (rather
+    # than os.getenv-only in create_pipeline) because the worker loads
+    # `.env` exclusively through pydantic Settings — we don't push values
+    # into os.environ. See the matching pattern in `_check_admin_key` and
+    # `_api_key_required`. Empty string disables Claude validation (the
+    # rule validator still runs).
+    anthropic_api_key: str = ""
+
     # DEV/TEST — turn off the per-tenant X-API-Key gate on /api/v1/*
     # endpoints (measurement, style classification). Production MUST
     # leave this true so callers must present a valid registered key.

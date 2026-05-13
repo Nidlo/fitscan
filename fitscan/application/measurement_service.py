@@ -28,6 +28,19 @@ def create_pipeline(
     enable_claude: bool = True,
 ) -> PipelineOrchestrator:
     """Factory function: creates the fully-wired pipeline."""
+    from fitscan.config import (
+        get_settings,
+    )  # local import — avoids circular at module load
+
+    settings = get_settings()
+    # os.environ wins when set (so tests using monkeypatch.setenv work
+    # without busting the lru-cached Settings instance), otherwise the
+    # Settings field — which is the only path that actually sees `.env`
+    # values, since the worker deliberately doesn't `load_dotenv()` into
+    # os.environ. See `_check_admin_key` / `_api_key_required` for the
+    # matching pattern.
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY") or settings.anthropic_api_key
+
     return PipelineOrchestrator(
         image_loader=ImageLoader(),
         preprocessor=ImagePreprocessor(),
@@ -44,7 +57,7 @@ def create_pipeline(
         ),
         mesh_analyzer=MeshAnalyzer(),
         rule_validator=RuleValidator(),
-        claude_validator=ClaudeValidator(api_key=os.getenv("ANTHROPIC_API_KEY")),
+        claude_validator=ClaudeValidator(api_key=anthropic_key),
         fuser=MeasurementFuser(),
         confidence_scorer=ConfidenceScorer(),
         enable_smpl=enable_smpl,
