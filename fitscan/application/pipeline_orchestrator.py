@@ -209,12 +209,25 @@ class PipelineOrchestrator:
 
         final = self._scorer.score(fused, validation, sources)
         logger.info(f"Pipeline complete. Height: {final.height_cm}")
+
+        # FS-NIDLO-SMPL-09 (Sprint 34 Phase A3) — anthropometric sanity
+        # check against adult-population proportion bounds. Each violation
+        # surfaces as `anthropometric:<field>` in degraded_modes so the
+        # frontend can flag the specific measurement for manual review
+        # without hiding it. We don't auto-correct: the user is the
+        # source of truth, silently clamping to a population mean would
+        # paper over the underlying model failure.
+        from fitscan.validation.anthropometric import check as check_anthropometric
+
+        anthropometric_flags = check_anthropometric(final)
+        degraded_modes = list(validation.degraded_modes) + anthropometric_flags
+
         return PipelineResult(
             measurements=final,
             mesh=mesh,
             landmark_verification=landmark_verification,
             pose=pose,
-            degraded_modes=list(validation.degraded_modes),
+            degraded_modes=degraded_modes,
         )
 
     @staticmethod

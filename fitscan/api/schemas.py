@@ -45,6 +45,8 @@ class MeasurementsResponse(BaseModel):
     wrist_cm: Optional[SingleMeasurementOut] = None
     neck_cm: Optional[SingleMeasurementOut] = None
     thigh_cm: Optional[SingleMeasurementOut] = None
+    knee_cm: Optional[SingleMeasurementOut] = None
+    ankle_cm: Optional[SingleMeasurementOut] = None
     # Widths
     shoulder_cm: Optional[SingleMeasurementOut] = None
     across_back_cm: Optional[SingleMeasurementOut] = None
@@ -59,6 +61,9 @@ class MeasurementsResponse(BaseModel):
     # Body + garment lengths
     height_cm: Optional[SingleMeasurementOut] = None
     inseam_cm: Optional[SingleMeasurementOut] = None
+    outseam_cm: Optional[SingleMeasurementOut] = None
+    waist_to_knee_cm: Optional[SingleMeasurementOut] = None
+    waist_to_floor_cm: Optional[SingleMeasurementOut] = None
     hip_depth_cm: Optional[SingleMeasurementOut] = None
     sleeve_length_cm: Optional[SingleMeasurementOut] = None
     blouse_length_cm: Optional[SingleMeasurementOut] = None
