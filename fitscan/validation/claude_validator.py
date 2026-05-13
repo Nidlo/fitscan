@@ -938,9 +938,32 @@ class ClaudeValidator:
             logger.warning(f"Claude landmark verification failed: {e}")
             return LandmarkVerification(verdicts={}, raw_response="")
 
+    # Sprint 36 cost optimisation. Anthropic's vision tiles inputs at
+    # 768×768, so a 4032×3024 phone photo just inflates per-call image
+    # token count (~3-4×) without giving Claude any measurable benefit
+    # — the body proportions are perfectly legible at 1024px. Resizing
+    # + dropping JPEG quality 85→70 cuts the encoded payload roughly
+    # in half and lands us at ~$0.05/scan instead of ~$0.10/scan, same
+    # accuracy. The pose detector + scale calibrator already ran on
+    # the full-resolution image upstream, so MediaPipe-level precision
+    # is unaffected.
+    _MAX_LONG_EDGE_PX = 1024
+    _JPEG_QUALITY = 70
+
     def _encode_image(self, image: np.ndarray) -> str:
+        h, w = image.shape[:2]
+        long_edge = max(h, w)
+        if long_edge > self._MAX_LONG_EDGE_PX:
+            scale = self._MAX_LONG_EDGE_PX / long_edge
+            new_w = int(round(w * scale))
+            new_h = int(round(h * scale))
+            # INTER_AREA is the recommended interpolation for downscaling
+            # — preserves detail better than bilinear at >2× shrink.
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
         rgb = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        _, buffer = cv2.imencode(".jpg", rgb, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        _, buffer = cv2.imencode(
+            ".jpg", rgb, [cv2.IMWRITE_JPEG_QUALITY, self._JPEG_QUALITY]
+        )
         return base64.b64encode(buffer).decode()
 
     def _parse_verdict_json(self, raw: str) -> dict:
