@@ -98,6 +98,49 @@ Rules:
 """
 
 
+CORRECTION_PROMPT = """
+You are a body-measurement vision expert helping a fashion app recover from a
+CV pipeline that gave low-confidence values. The person in the photo is
+{height_cm} cm tall — use that height as your scale reference (head-to-foot ≈
+{height_cm} cm).
+
+The CV pipeline produced these candidate measurements (all in cm). Some are
+suspect — listed under FLAGGED. Look at the photo, reason about each flagged
+measurement visually using the height anchor, and propose a corrected value
+when you are confident the CV was wrong.
+
+CANDIDATE: {candidate_json}
+FLAGGED: {flagged}
+
+Body-proportion reality checks (use these to sanity-check the candidates):
+- Adult waist circumference is typically 35-65% of height. A 170cm person
+  has a waist 60-110 cm.
+- Hip circumference is typically 40-68% of height.
+- Bust / chest circumference is typically 40-70% of height.
+- Bicep (around-arm) is typically 13-30% of height.
+- Wrist is typically 7-13% of height — much smaller than bicep.
+- Neck is typically 16-28% of height.
+- bicep < waist, wrist < bicep, ankle < knee < thigh — ALWAYS.
+
+Respond with ONLY valid JSON (no prose, no markdown fences). For each flagged
+field, return either a corrected value (with reasoning) or "agree" if the CV
+estimate looks right after all:
+
+{{
+  "corrections": {{
+    "waist_cm": {{ "value_cm": 95.0, "confidence": 0.75, "reasoning": "..." }},
+    "hip_cm": "agree",
+    ...
+  }}
+}}
+
+Confidence is your own — 0.0 to 1.0. Only return corrections you'd stake on; we
+will only apply corrections with confidence ≥ 0.6. If you genuinely cannot tell
+from the photo (occlusion, bad lighting, partial body), return "skip" instead
+of guessing.
+"""
+
+
 class ClaudeValidator:
     """Validates measurements using Claude Vision API.
 
@@ -173,6 +216,117 @@ class ClaudeValidator:
         except Exception as e:
             logger.warning(f"Claude validation failed: {e}")
             return self._default_result()
+
+    def correct(
+        self,
+        image: np.ndarray,
+        measurements: BodyMeasurements,
+        flagged_fields: list[str],
+        height_cm: float | None,
+        subject_id: str | None = None,
+        min_confidence: float = 0.6,
+    ) -> dict[str, float]:
+        """Sprint 34 Phase C — ask Claude for per-field measurement corrections
+        on the fields the anthropometric validator flagged as out-of-band.
+        Returns a `{field_name: corrected_value_cm}` dict — only fields Claude
+        is confident about (>= `min_confidence`). "agree" / "skip" responses
+        don't appear in the return.
+
+        Consent gate is the same as `validate()`: photo only ships to
+        Anthropic when both `api_key` and `subject_id` are present. Without
+        either, returns an empty dict (no corrections, no API call, no
+        Anthropic spend).
+
+        Cost: ~$0.005 per call at Claude Sonnet 4.6 vision pricing. Caller
+        should only invoke this when the upstream pipeline already produced
+        a low-confidence or anthropometric-violation result — running it on
+        every scan unconditionally is wasteful.
+        """
+        if not flagged_fields:
+            return {}
+        if not self._api_key or self._api_key == "test_key_placeholder":
+            return {}
+        if not subject_id:
+            logger.info("claude correction skipped: no subject_id consent token")
+            return {}
+        if height_cm is None:
+            logger.info("claude correction skipped: no height anchor")
+            return {}
+
+        # Only ship the fields actually flagged + a few neighbours for context.
+        # Keeping the candidate payload narrow keeps Claude focused on the
+        # measurement we want it to evaluate, and keeps the input-token cost
+        # bounded.
+        candidate = {
+            field: getattr(measurements, field).value_cm
+            for field in flagged_fields
+            if getattr(measurements, field, None) is not None
+        }
+        if not candidate:
+            return {}
+
+        try:
+            client = _anthropic_client(self._api_key)
+            img_b64 = self._encode_image(image)
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=1024,
+                metadata={"user_id": subject_id},
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/jpeg",
+                                    "data": img_b64,
+                                },
+                            },
+                            {
+                                "type": "text",
+                                "text": CORRECTION_PROMPT.format(
+                                    height_cm=height_cm,
+                                    candidate_json=json.dumps(candidate),
+                                    flagged=", ".join(flagged_fields),
+                                ),
+                            },
+                        ],
+                    }
+                ],
+            )
+            raw = response.content[0].text
+            parsed = self._parse_verdict_json(raw)
+            corrections_raw = parsed.get("corrections", {})
+
+            accepted: dict[str, float] = {}
+            for field, payload in corrections_raw.items():
+                # "agree" / "skip" — leave as-is.
+                if not isinstance(payload, dict):
+                    continue
+                value = payload.get("value_cm")
+                confidence = payload.get("confidence", 0.0)
+                if not isinstance(value, (int, float)):
+                    continue
+                if not isinstance(confidence, (int, float)):
+                    continue
+                if confidence < min_confidence:
+                    continue
+                # Final sanity bound — if Claude's correction is just as
+                # implausible as the original (very tall person, e.g.
+                # waist 200cm) reject it.
+                if value <= 0 or value > 300:
+                    continue
+                accepted[field] = float(value)
+            return accepted
+
+        except json.JSONDecodeError:
+            logger.warning("Claude correction returned non-JSON; skipping.")
+            return {}
+        except Exception as e:  # noqa: BLE001 — defence in depth
+            logger.warning(f"Claude correction failed: {e}")
+            return {}
 
     def verify_landmarks(
         self,

@@ -242,19 +242,69 @@ class PipelineOrchestrator:
             validation = rule_result
 
         final = self._scorer.score(fused, validation, sources)
-        logger.info(f"Pipeline complete. Height: {final.height_cm}")
 
         # FS-NIDLO-SMPL-09 (Sprint 34 Phase A3) — anthropometric sanity
         # check against adult-population proportion bounds. Each violation
         # surfaces as `anthropometric:<field>` in degraded_modes so the
-        # frontend can flag the specific measurement for manual review
-        # without hiding it. We don't auto-correct: the user is the
-        # source of truth, silently clamping to a population mean would
-        # paper over the underlying model failure.
+        # frontend can flag the specific measurement for manual review.
         from fitscan.validation.anthropometric import check as check_anthropometric
 
         anthropometric_flags = check_anthropometric(final)
+
+        # Sprint 34 Phase C — ask Claude for visual corrections on the
+        # flagged fields. Only fires when Claude is enabled, an explicit
+        # consent token (subject_id) was supplied, and there's at least
+        # one flag to correct. Cost-bounded: one Claude call per scan max,
+        # only when the upstream pipeline already produced suspect output.
+        applied_corrections: list[str] = []
+        if claude_on and anthropometric_flags and height_cm is not None:
+            flagged_field_names = [
+                tag.split(":", 1)[1]
+                for tag in anthropometric_flags
+                if tag.startswith("anthropometric:")
+            ]
+            try:
+                corrections = self._claude_validator.correct(
+                    image=processed.original,
+                    measurements=final,
+                    flagged_fields=flagged_field_names,
+                    height_cm=float(height_cm),
+                    subject_id=subject_id,
+                )
+                for field_name, corrected_value in corrections.items():
+                    current = getattr(final, field_name, None)
+                    if current is None:
+                        continue
+                    # Replace with Claude's value but keep a modest
+                    # confidence (0.70) — Claude is good at sanity but not
+                    # tape-measure-accurate. The "claude_corrected" source
+                    # tag lets downstream consumers know the value was
+                    # post-processed.
+                    setattr(
+                        final,
+                        field_name,
+                        type(current)(
+                            value_cm=round(corrected_value, 1),
+                            confidence=0.70,
+                            source="claude_corrected",
+                        ),
+                    )
+                    applied_corrections.append(field_name)
+            except Exception as e:
+                logger.warning(f"Claude correction skipped: {e}")
+
+        # Re-run the anthropometric check post-correction. Fields Claude
+        # corrected may now pass; only the still-failing ones stay flagged.
+        anthropometric_flags = check_anthropometric(final)
+
+        logger.info(
+            f"Pipeline complete. Height: {final.height_cm} "
+            f"corrections={applied_corrections} flags={anthropometric_flags}"
+        )
+
         degraded_modes = list(validation.degraded_modes) + anthropometric_flags
+        if applied_corrections:
+            degraded_modes.append("claude_corrections:" + ",".join(applied_corrections))
 
         return PipelineResult(
             measurements=final,
