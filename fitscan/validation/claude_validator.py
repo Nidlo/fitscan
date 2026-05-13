@@ -119,11 +119,41 @@ Head-top-to-floor in the FRONT photo represents that many cm. Calibrate
 every other measurement off it. Do not assume the camera was at any
 particular distance — only the height anchor is reliable.
 
-When a LEFT-SIDE photo is provided, use it for the DEPTH dimension of
-each circumference. Front gives you WIDTH; side gives you DEPTH. The
-circumference is approximately the perimeter of an ellipse with those
-two diameters as axes (Ramanujan's formula gives π·(a+b)·(1 + 3h/(10+√(4-3h))),
-h = ((a-b)/(a+b))²), or close-enough by 1.10 × π·(a+b)/2 for soft tissue.
+CIRCUMFERENCE PROTOCOL — read this carefully, the previous prompt phrased
+the geometry in a way that produced 2× inflated values:
+
+1. Measure WIDTH at the relevant body level from the FRONT photo
+   (full left-edge to right-edge of the body, in cm at the height-anchored
+   scale).
+2. If a SIDE photo is provided, measure DEPTH at the same level from it
+   (full front-edge to back-edge of the body, in cm).
+3. If no side photo, estimate depth from typical adult cross-section
+   ratios:
+      - waist:   depth ≈ 0.62 × width
+      - hip:     depth ≈ 0.70 × width
+      - bust:    depth ≈ 0.68 × width
+      - underbust: depth ≈ 0.65 × width
+      - thigh:   depth ≈ 0.90 × width (nearly circular)
+      - bicep / around_arm: depth ≈ 0.95 × width (essentially circular)
+      - wrist:   depth ≈ 0.72 × width
+      - knee:    depth ≈ 0.90 × width
+      - ankle:   depth ≈ 0.85 × width
+      - neck:    depth ≈ 0.90 × width (slightly oval)
+4. **Circumference (cm) = π × (width + depth) / 2**. This is the average-
+   diameter approximation; it lands within 3-5% of a tape measurement on
+   adult human cross-sections.
+
+DO NOT double the result. WIDTH and DEPTH are the *full body extents*
+(diameters), not radii. The /2 in the formula handles the geometric
+conversion. If you find yourself computing values ≥ 1.5 × height-in-cm
+for any single circumference, you've doubled by mistake — re-do that
+field.
+
+WORKED EXAMPLES (commit these):
+- Adult waist: width 38 cm, depth 24 cm → π × (38+24)/2 = π × 31 ≈ 97 cm.
+  That matches a real 38" tape (≈97 cm). DO NOT return 200 cm.
+- Adult bicep: width 11 cm, depth 11 cm → π × 11 ≈ 35 cm. NOT 70 cm.
+- Adult hip: width 39 cm, depth 27 cm → π × 33 ≈ 104 cm. NOT 210 cm.
 
 Always report in cm. Tape-measure each field at the standard location:
 
@@ -538,7 +568,12 @@ class ClaudeValidator:
 
             response = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=2048,
+                # 22+ fields, each carrying a "note" string. 2048 was
+                # truncating responses mid-JSON; the corrector got
+                # the same fix (4096) in Sprint 35. Single source of
+                # truth: this needs to fit the worst-case verbose-note
+                # response with structure overhead.
+                max_tokens=4096,
                 metadata={"user_id": subject_id},
                 system=[
                     {
