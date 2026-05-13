@@ -693,7 +693,12 @@ class ClaudeValidator:
             img_b64 = self._encode_image(image)
             response = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=1024,
+                # Sprint 35 — bumped from 1024. The previous cap was being
+                # hit when 10+ fields were flagged because each field
+                # carries a reasoning string. Output was getting cut off
+                # mid-JSON, defeating the whole point. 4096 covers the
+                # worst case (14+ flagged fields × ~250 reasoning tokens).
+                max_tokens=4096,
                 metadata={"user_id": subject_id},
                 messages=[
                     {
