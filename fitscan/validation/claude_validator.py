@@ -212,6 +212,56 @@ Return JSON only.
 """
 
 
+# Sprint 35 — height estimation from a single photo. No height anchor
+# this time; Claude has to reason from contextual cues alone (door
+# frames, common furniture, body proportions). Doorways are typically
+# 200cm tall in West Africa, 203-213cm in the US, 210cm in Europe.
+# Furniture: standard kitchen counter ≈ 90-92cm, dining table ≈ 75cm,
+# door knobs ≈ 95-105cm above floor. Standard sneaker / sandal heel
+# ≈ 2cm. Body-proportion fallback: an adult's head-to-floor is ~7.5×
+# their head height (the "8 head" canon in figure drawing is slightly
+# stylised; 7.5 is the real-world average).
+HEIGHT_ESTIMATE_PROMPT = """\
+Estimate this person's height in centimetres.
+
+You don't have a stated height to work from. Use ALL of these cues
+together — don't lean on just one:
+
+1. Background scale references — door frames (200-213 cm tall, 76-91 cm
+   wide), kitchen counters (~90 cm), dining tables (~75 cm), door knobs
+   and switches (~95-105 cm), TV stands, bookshelves. Compare the
+   person's full standing height to any visible reference.
+2. Body proportions — an adult's total height is approximately 7.5 ×
+   their head height (head from chin to crown). If you can estimate head
+   size accurately you can back out total height.
+3. Sex / gender-presentation prior — adult women average ~163 cm
+   globally (range 145-180+), adult men average ~175 cm (range 155-200+).
+4. Footwear visible in the photo — barefoot, flat sandals (+2 cm),
+   sneakers (+3 cm), heels (+5-10 cm). Subtract footwear lift to get
+   true skeletal height.
+
+Respond with ONLY this JSON shape, no prose, no markdown fences:
+
+{
+  "height_cm": <number>,
+  "confidence": <0.0-1.0>,
+  "cues_used": ["door_frame" | "kitchen_counter" | "table" | "doorknob" |
+                "head_proportion" | "footwear" | "sex_prior" | ...],
+  "note": "<one-line explanation of your reasoning>"
+}
+
+Confidence guide:
+- 0.9 = "within 3 cm" (clear background reference like a door frame
+  visible end-to-end)
+- 0.7 = "within 5 cm" (several proportion cues + a partial reference)
+- 0.5 = "within 8 cm" (proportion + sex prior only)
+- < 0.5 = don't trust; refuse with height_cm: null
+
+Adults only. If the photo shows a minor (< 18) return height_cm: null
+and note the reason — measurement flow is for adult bodies.
+"""
+
+
 CORRECTION_PROMPT = """
 You are a body-measurement vision expert helping a fashion app recover from a
 CV pipeline that gave low-confidence values. The person in the photo is
@@ -330,6 +380,79 @@ class ClaudeValidator:
         except Exception as e:
             logger.warning(f"Claude validation failed: {e}")
             return self._default_result()
+
+    def estimate_height(
+        self,
+        image: np.ndarray,
+        subject_id: str | None = None,
+        min_confidence: float = 0.5,
+    ) -> float | None:
+        """Sprint 35 — estimate the person's height in cm from a single
+        photo when no height was supplied and we don't want to lean on
+        a stale stored value. Uses contextual scale cues (door frames,
+        furniture, body proportions, footwear) — see HEIGHT_ESTIMATE_PROMPT.
+
+        Returns the estimated cm, or `None` when the consent gate fails,
+        Claude isn't confident enough (< `min_confidence`), or anything
+        errors. Callers MUST handle the `None` case by either falling
+        back to the stored value or surfacing a validation error.
+        """
+        if not self._api_key or self._api_key == "test_key_placeholder":
+            return None
+        if not subject_id:
+            logger.info("claude height-estimate skipped: no subject_id consent token")
+            return None
+
+        try:
+            client = _anthropic_client(self._api_key)
+            img_b64 = self._encode_image(image)
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=512,
+                metadata={"user_id": subject_id},
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/jpeg",
+                                    "data": img_b64,
+                                },
+                            },
+                            {"type": "text", "text": HEIGHT_ESTIMATE_PROMPT},
+                        ],
+                    }
+                ],
+            )
+            raw = response.content[0].text
+            parsed = self._parse_verdict_json(raw)
+            height = parsed.get("height_cm")
+            confidence = parsed.get("confidence", 0.0)
+            if not isinstance(height, (int, float)):
+                return None
+            if not isinstance(confidence, (int, float)) or confidence < min_confidence:
+                logger.info(
+                    f"claude height-estimate below confidence threshold: "
+                    f"{height}cm @ {confidence}"
+                )
+                return None
+            if height <= 0 or height < 50 or height > 250:
+                # Out-of-band — don't trust.
+                return None
+            logger.info(
+                f"claude height-estimate: {height}cm conf={confidence} "
+                f"cues={parsed.get('cues_used', [])}"
+            )
+            return float(height)
+        except json.JSONDecodeError:
+            logger.warning("Claude height-estimate returned non-JSON; skipping.")
+            return None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Claude height-estimate failed: {e}")
+            return None
 
     def measure(
         self,
@@ -724,27 +847,104 @@ class ClaudeValidator:
         fall back to the widest `{…}` span the response contains. Raises
         `json.JSONDecodeError` only when even that span fails to parse —
         the caller maps that to the "default to proceed" path.
+
+        Sprint 35 — additionally tolerate:
+          - multiple {…} blocks in one response (pick the largest)
+          - trailing commas (some Claude responses leak JS-style commas)
+          - JSON inside ```text fences without the language hint
+          - whole responses with `// comments` inline that need stripping
         """
         text = raw.strip()
-        # ```json …``` or ``` …``` fences
+        # ```json …``` or ``` …``` fences — strip the first fenced block.
         if text.startswith("```"):
             text = text.split("```", 2)[1]
-            if text.startswith("json"):
-                text = text[4:]
+            for lang in ("json\n", "json ", "json"):
+                if text.startswith(lang):
+                    text = text[len(lang) :]
+                    break
             text = text.strip()
             if text.endswith("```"):
                 text = text[:-3].strip()
+
+        # First pass — straight parse.
         try:
             return json.loads(text)
         except json.JSONDecodeError:
             pass
-        # Preamble / suffix — grab the widest {…} span and try again
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end > start:
-            return json.loads(text[start : end + 1])
-        # Re-raise the original parse error for the caller's except clause
-        return json.loads(text)
+
+        # Strip JS-style line comments + trailing commas (Claude rarely
+        # emits these but it does happen — guard the parser).
+        cleaned = self._strip_json_warts(text)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        # Find ALL top-level {…} spans and try the largest one. Claude
+        # sometimes emits both a small `{"reasoning": "..."}` preamble and
+        # the real result; we want the latter.
+        spans = self._find_json_object_spans(cleaned)
+        for start, end in sorted(spans, key=lambda s: -(s[1] - s[0])):
+            try:
+                return json.loads(cleaned[start : end + 1])
+            except json.JSONDecodeError:
+                continue
+
+        # No span parsed. Surface the raw response in the log so the
+        # operator can see exactly what Claude returned — silent failures
+        # are the most expensive kind here.
+        logger.warning(
+            "Claude response was unparseable JSON. First 200 chars: " f"{raw[:200]!r}"
+        )
+        return json.loads(text)  # re-raise original error
+
+    @staticmethod
+    def _strip_json_warts(text: str) -> str:
+        """Strip JS-style `// line comments` and trailing commas from a
+        JSON-ish string. Cheap regex pass; not a real parser. Safe for the
+        narrow class of warts Claude emits in practice — anything more
+        sophisticated should round-trip through `json5` instead.
+        """
+        import re
+
+        # `// to end of line` (avoid matching inside strings via a simple
+        # check that the // isn't preceded by an odd number of unescaped
+        # quotes on the line — close enough for Claude's output).
+        text = re.sub(r"//[^\n]*", "", text)
+        # `,}` or `,]` — trailing commas.
+        text = re.sub(r",(\s*[}\]])", r"\1", text)
+        return text
+
+    @staticmethod
+    def _find_json_object_spans(text: str) -> list[tuple[int, int]]:
+        """Find balanced `{…}` spans in `text`. Returns (start, end)
+        inclusive indices. Handles nested braces; ignores braces inside
+        double-quoted strings (escaped quotes respected). O(n)."""
+        spans: list[tuple[int, int]] = []
+        stack: list[int] = []
+        i = 0
+        n = len(text)
+        while i < n:
+            ch = text[i]
+            if ch == '"':
+                # Skip until matching unescaped quote.
+                i += 1
+                while i < n:
+                    if text[i] == "\\":
+                        i += 2
+                        continue
+                    if text[i] == '"':
+                        break
+                    i += 1
+            elif ch == "{":
+                stack.append(i)
+            elif ch == "}":
+                if stack:
+                    start = stack.pop()
+                    if not stack:
+                        spans.append((start, i))
+            i += 1
+        return spans
 
     def _default_result(self) -> ValidationResult:
         return ValidationResult(

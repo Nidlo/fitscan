@@ -117,6 +117,7 @@ class PipelineOrchestrator:
         enable_smpl: bool | None = None,
         enable_claude: bool | None = None,
         side_image_path: Path | None = None,
+        estimate_height: bool = False,
     ) -> PipelineResult:
         """Like `run()` but also surfaces the SMPL mesh + parameters when
         available. Used by `/measure/avatar` to render the GLB without
@@ -195,6 +196,31 @@ class PipelineOrchestrator:
                 except Exception as e:
                     logger.warning(f"Landmark verification skipped: {e}")
                     landmark_verification = None
+
+        # Sprint 35 — Claude estimates the height from the front photo when
+        # the caller didn't provide height_cm OR a reference object AND
+        # explicitly opted into estimation. Cues: door frames, furniture,
+        # body proportions, footwear. Returns None if Claude isn't confident
+        # enough (< 0.5) — caller then has to error out, since we've run
+        # out of scale anchors. The estimated value gets logged so an
+        # operator can see what Claude guessed.
+        if (
+            height_cm is None
+            and reference_object_cm is None
+            and estimate_height
+            and claude_on
+            and subject_id
+        ):
+            try:
+                estimated = self._claude_validator.estimate_height(
+                    image=processed.original,
+                    subject_id=subject_id,
+                )
+                if estimated is not None:
+                    height_cm = estimated
+                    logger.info(f"Using Claude-estimated height: {estimated} cm")
+            except Exception as e:
+                logger.warning(f"Claude height-estimate failed: {e}")
 
         if height_cm:
             scale = self._scale_calibrator.calibrate_from_height(pose, height_cm)

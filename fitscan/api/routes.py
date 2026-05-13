@@ -194,6 +194,16 @@ def measure_body(
     ),
     height_cm: float | None = Form(None),
     reference_object_cm: float | None = Form(None),
+    estimate_height: bool = Form(
+        False,
+        description=(
+            "Sprint 35 — when true AND `height_cm`+`reference_object_cm` are "
+            "both omitted, Claude estimates the person's height from the "
+            "front photo using contextual cues (door frames, furniture, body "
+            "proportions). Requires `subject_id` (consent gate). Adds ~3s of "
+            "latency for the extra Claude call."
+        ),
+    ),
     gender_profile: str = Form("ladies"),
     enable_smpl: bool = Form(True),
     enable_claude: bool = Form(True),
@@ -221,11 +231,11 @@ def measure_body(
         ):
             error_kind = "validation"
             raise HTTPException(400, "Side file must be an image.")
-        if height_cm is None and reference_object_cm is None:
+        if height_cm is None and reference_object_cm is None and not estimate_height:
             error_kind = "validation"
             raise HTTPException(
                 400,
-                "Provide either height_cm or reference_object_cm.",
+                "Provide one of: height_cm, reference_object_cm, or estimate_height=true.",
             )
         tmp_path = _stream_to_tempfile(image)
         side_tmp_path = (
@@ -237,6 +247,7 @@ def measure_body(
                 side_image_path=side_tmp_path,
                 height_cm=height_cm,
                 reference_object_cm=reference_object_cm,
+                estimate_height=estimate_height,
                 gender_profile=gender_profile,
                 subject_id=subject_id,
                 enable_smpl=enable_smpl,
