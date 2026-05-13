@@ -47,6 +47,11 @@ Fashion interests: {interests}
 Available specializations on the platform (recommend by EXACT slug):
 {specializations}
 
+The client prefers measurements expressed in **{display_unit}**. When the
+summary refers to any measurement value, write it in {display_unit} (converted
+from the mm payload, rounded to the nearest whole {display_unit_unit}).
+Do NOT mix units inside the summary. NEVER cite mm.
+
 Respond with ONLY this JSON shape:
 {{
   "body_shape": "<rectangle | hourglass | pear | inverted_triangle | oval>",
@@ -67,8 +72,14 @@ Rules:
 - flattering_silhouettes: 3-5 short descriptors
 - recommended_specializations: 1-3 slugs from the list above
   (or empty array if none fit)
-- summary: 2-4 sentences, second-person ("Your shape...")
+- summary: 2-4 sentences, second-person ("Your shape..."); aim for 400-1000 characters total, hard ceiling 1400. Never wrap in quotes. Use {display_unit} for any numeric measurement you mention.
 """
+
+# Defensive ceiling matched to StyleProfileResponse.summary's max_length.
+# Claude usually honours the prompt's 1000-char target; this is the safety
+# net for the rare overrun so we never throw away a real classification on
+# a 50-char overshoot.
+_SUMMARY_HARD_CAP = 1500
 
 
 class StyleAnalyzer:
@@ -94,6 +105,11 @@ class StyleAnalyzer:
             logger.info("style: no subject_id consent token — returning fallback")
             return self._fallback(request)
 
+        # Spell out the unit name so the prompt reads naturally
+        # ("rounded to the nearest whole centimetre") rather than
+        # leaking the API-level slug into Claude's prose.
+        unit_name = "inch" if request.display_unit == "inches" else "centimetre"
+
         try:
             client = _anthropic_client(self._api_key)
             response = client.messages.create(
@@ -109,12 +125,27 @@ class StyleAnalyzer:
                             specializations=json.dumps(
                                 request.available_specializations
                             ),
+                            display_unit=request.display_unit,
+                            display_unit_unit=unit_name,
                         ),
                     }
                 ],
             )
             raw = response.content[0].text
             parsed = json.loads(raw)
+            summary = str(parsed["summary"])
+            if len(summary) > _SUMMARY_HARD_CAP:
+                # Claude very occasionally over-runs the prompt's char
+                # target. Truncate at the last sentence boundary that
+                # still fits so the user sees a coherent answer rather
+                # than a deterministic fallback.
+                truncated = summary[:_SUMMARY_HARD_CAP]
+                last_period = truncated.rfind(". ")
+                summary = truncated[: last_period + 1] if last_period > 0 else truncated
+                logger.info(
+                    f"style: summary trimmed from {len(parsed['summary'])} "
+                    f"to {len(summary)} chars"
+                )
             return StyleProfileResponse(
                 body_shape=parsed["body_shape"],
                 body_shape_confidence=float(parsed.get("body_shape_confidence", 0.7)),
@@ -124,7 +155,7 @@ class StyleAnalyzer:
                 recommended_specializations=parsed.get(
                     "recommended_specializations", []
                 ),
-                summary=parsed["summary"],
+                summary=summary,
                 from_fallback=False,
             )
         except json.JSONDecodeError:
