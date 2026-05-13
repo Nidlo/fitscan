@@ -18,6 +18,7 @@ from fitscan.domain.models import (
     BodyMeasurements,
     LandmarkVerdict,
     LandmarkVerification,
+    SingleMeasurement,
     ValidationResult,
 )
 
@@ -95,6 +96,119 @@ Rules:
 - quality_issues: list from ["loose_clothing", "partial_body", "bad_lighting",
   "motion_blur", "low_resolution", "obscured_limbs", "bad_angle"]
 - recommendation: "proceed" if quality >= 6, else "retake"
+"""
+
+
+# Static measurement-technique block. Lives in the `system=` parameter so
+# Anthropic's prompt cache can hold it across calls (90% input-token cost
+# reduction on cache hits, ~5min TTL). The per-call body of MEASURE_PROMPT
+# below only carries the photo-specific inputs (height + per-call notes),
+# so every measure call after the first hits the cache cleanly.
+#
+# Sprint 34 Phase C+. Per-field technique distilled from the Bishop
+# Fabric Tailor's Companion and standard ISO 8559-1 anthropometric
+# definitions — the precise locations real tailors measure at.
+MEASUREMENT_TECHNIQUE_SYSTEM = """\
+You are a senior tape-measure-trained body-measurement expert helping a
+fashion app extract garment measurements from photos. You analyse a FRONT
+photo and (optionally) a LEFT-SIDE photo of one person standing upright,
+arms slightly away from sides, and report measurements in centimetres.
+
+CRITICAL: the person's stated `height_cm` is your absolute scale anchor.
+Head-top-to-floor in the FRONT photo represents that many cm. Calibrate
+every other measurement off it. Do not assume the camera was at any
+particular distance — only the height anchor is reliable.
+
+When a LEFT-SIDE photo is provided, use it for the DEPTH dimension of
+each circumference. Front gives you WIDTH; side gives you DEPTH. The
+circumference is approximately the perimeter of an ellipse with those
+two diameters as axes (Ramanujan's formula gives π·(a+b)·(1 + 3h/(10+√(4-3h))),
+h = ((a-b)/(a+b))²), or close-enough by 1.10 × π·(a+b)/2 for soft tissue.
+
+Always report in cm. Tape-measure each field at the standard location:
+
+CIRCUMFERENCES (around-body, parallel to ground unless noted):
+- bust / chest: around the fullest part of the chest. For women, at the
+  nipple-line; for men, at the widest pectoral. ISO 8559-1 §5.2.1.
+- under_breast / underbust: directly under the bust where a bra band sits.
+- waist: NARROWEST part of the natural waist (above the navel, below the
+  ribcage). Not the trouser-belt line.
+- hip: AROUND the fullest part of the seat / buttocks, ~20cm below waist.
+- thigh: around the fullest part of the upper leg, just below the gluteal
+  fold.
+- knee: around the kneecap with leg straight.
+- ankle: around the ankle bone (lateral malleolus).
+- around_arm / bicep: around the fullest part of the upper arm, arm
+  relaxed at the side.
+- wrist: around the bone joint (ulnar styloid).
+- neck: around the base of the neck, where a collar sits.
+
+WIDTHS / SPANS (straight-line, not around-body):
+- shoulder: tip-to-tip across the back, acromion to acromion.
+- across_back: 10-12cm below the seventh cervical vertebra, between the
+  rear armhole points.
+- across_chest: same height as across_back but on the front, between the
+  front armhole points.
+
+VERTICAL LENGTHS:
+- height_cm: head-top to floor, standing straight (THIS IS THE ANCHOR).
+- shoulder_to_waist: shoulder-tip down the front to the natural waist.
+- nape_to_waist / back_length: from the seventh cervical vertebra (the
+  bump at base of neck) down the spine to the natural waist.
+- shoulder_to_hip: shoulder-tip to fullest-hip y-position.
+- inseam: crotch to ankle bone, INSIDE leg.
+- outseam: natural waist to ankle bone, OUTSIDE leg.
+- waist_to_knee: natural waist to kneecap.
+- waist_to_floor: natural waist to floor.
+- sleeve_length / arm_length: shoulder-tip to wrist bone with arm
+  slightly bent (~10°).
+
+RESPONSE FORMAT — ONLY valid JSON, no prose, no markdown fences:
+
+{
+  "measurements_cm": {
+    "<field_name>": {
+      "value": <number>,
+      "confidence": <0.0-1.0>,
+      "note": "<one-line technique note or "skip-reason">"
+    }
+  },
+  "photo_quality": {
+    "front_score": <0-10>,
+    "side_score": <0-10 or null if no side photo>,
+    "issues": ["loose_clothing"|"bad_lighting"|"partial_body"|"motion_blur"|"obscured_limbs"|"bad_angle"|...]
+  },
+  "global_note": "<one-sentence overall assessment>"
+}
+
+If you genuinely cannot place a measurement (occlusion, clothing,
+ambiguity), set `value: null` and `confidence: 0.0` with `note` explaining
+WHY. Do not guess wildly. Confidence is your own estimate of how close
+you'd be to a tape-measure ground truth: 0.9 = "within 1cm", 0.7 =
+"within 3cm", 0.5 = "within 5cm", below 0.5 = don't trust.
+
+Bound-checks (ALWAYS, regardless of what the photo shows):
+- 0.35 ≤ waist/height ≤ 0.65
+- 0.40 ≤ hip/height ≤ 0.68
+- 0.40 ≤ bust/height ≤ 0.70
+- 0.13 ≤ bicep/height ≤ 0.30
+- 0.07 ≤ wrist/height ≤ 0.13
+- wrist < bicep, bicep < waist, ankle < knee < thigh — universal adult
+  invariants.
+
+If your visual estimate violates a bound, that's a signal you misread
+the photo — reassess with the height anchor before reporting.
+"""
+
+
+MEASURE_PROMPT_USER = """\
+height_cm: {height_cm}
+gender_profile: {gender_profile}
+side_photo_provided: {has_side}
+
+Use the FRONT photo for body widths + vertical lengths. {side_clause}
+
+Return JSON only.
 """
 
 
@@ -216,6 +330,192 @@ class ClaudeValidator:
         except Exception as e:
             logger.warning(f"Claude validation failed: {e}")
             return self._default_result()
+
+    def measure(
+        self,
+        front_image: np.ndarray,
+        side_image: np.ndarray | None,
+        height_cm: float,
+        gender_profile: str = "ladies",
+        subject_id: str | None = None,
+    ) -> BodyMeasurements | None:
+        """Sprint 34 Phase C+ — Claude as a co-primary measurement source.
+
+        Sends both photos + the user's height to Claude with a rigorous
+        tape-measure technique system prompt. Returns a `BodyMeasurements`
+        Claude estimated directly from the photos, with per-field
+        confidence; the orchestrator then fuses this with the CV pipeline
+        (silhouette + SMPL) via the normal weighted-confidence fuser.
+
+        Returns `None` when the consent gate fails (no api_key, no
+        subject_id), the API call errors, or Claude returns unparseable
+        output — at which point the pipeline silently degrades to
+        CV-only and the operator sees a warning in the log.
+
+        The technique prompt lives in `MEASUREMENT_TECHNIQUE_SYSTEM` and
+        is sent as the `system=` block with `cache_control` so Anthropic
+        caches it across calls (90% input-token saving, 5min TTL).
+        """
+        if not self._api_key or self._api_key == "test_key_placeholder":
+            return None
+        if not subject_id:
+            logger.info("claude measure skipped: no subject_id consent token")
+            return None
+        if height_cm is None or height_cm <= 0:
+            return None
+
+        try:
+            client = _anthropic_client(self._api_key)
+            front_b64 = self._encode_image(front_image)
+
+            content: list[dict[str, Any]] = [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": front_b64,
+                    },
+                },
+            ]
+            if side_image is not None:
+                content.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": self._encode_image(side_image),
+                        },
+                    }
+                )
+
+            content.append(
+                {
+                    "type": "text",
+                    "text": MEASURE_PROMPT_USER.format(
+                        height_cm=height_cm,
+                        gender_profile=gender_profile,
+                        has_side=side_image is not None,
+                        side_clause=(
+                            "Use the SIDE photo for body DEPTHS. Combine "
+                            "front-width and side-depth via the ellipse "
+                            "circumference formula for every circumference."
+                            if side_image is not None
+                            else (
+                                "No side photo provided. Estimate depth "
+                                "from torso proportions visible in the "
+                                "front photo; flag any circumference where "
+                                "your depth estimate is uncertain."
+                            )
+                        ),
+                    ),
+                }
+            )
+
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=2048,
+                metadata={"user_id": subject_id},
+                system=[
+                    {
+                        "type": "text",
+                        "text": MEASUREMENT_TECHNIQUE_SYSTEM,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                messages=[{"role": "user", "content": content}],
+            )
+
+            raw = response.content[0].text
+            parsed = self._parse_verdict_json(raw)
+            return self._claude_measurements_to_body(
+                parsed, gender_profile=gender_profile
+            )
+        except json.JSONDecodeError:
+            logger.warning("Claude measure returned non-JSON; skipping.")
+            return None
+        except Exception as e:  # noqa: BLE001 — defence in depth
+            logger.warning(f"Claude measure failed: {e}")
+            return None
+
+    @staticmethod
+    def _claude_measurements_to_body(
+        parsed: dict, gender_profile: str
+    ) -> BodyMeasurements | None:
+        """Map Claude's `{measurements_cm: {field: {value, confidence, note}}}`
+        into a `BodyMeasurements` dataclass the fuser can consume. Field
+        names follow the technique prompt — match the dataclass attribute
+        names via the `claude_to_body` map below. Unknown / null values
+        become None on the BodyMeasurements (the fuser already handles
+        per-field nullability).
+        """
+        m_in = parsed.get("measurements_cm", {})
+        if not isinstance(m_in, dict):
+            return None
+
+        # Claude field name → BodyMeasurements attribute. We accept either
+        # the short name ("waist") or the suffixed name ("waist_cm") —
+        # Claude has been seen producing both depending on prompt phrasing.
+        claude_to_body: dict[str, str] = {
+            "bust": "bust_cm",
+            "chest": "chest_cm",
+            "waist": "waist_cm",
+            "hip": "hip_cm",
+            "under_breast": "under_breast_waist_cm",
+            "underbust": "under_breast_waist_cm",
+            "around_arm": "around_arm_cm",
+            "bicep": "around_arm_cm",
+            "wrist": "wrist_cm",
+            "neck": "neck_cm",
+            "thigh": "thigh_cm",
+            "knee": "knee_cm",
+            "ankle": "ankle_cm",
+            "shoulder": "shoulder_cm",
+            "across_back": "across_back_cm",
+            "across_chest": "across_chest_cm",
+            "shoulder_to_waist": "shoulder_to_waist_cm",
+            "shoulder_to_hip": "shoulder_to_hip_cm",
+            "nape_to_waist": "nape_to_waist_cm",
+            "back_length": "nape_to_waist_cm",
+            "height": "height_cm",
+            "inseam": "inseam_cm",
+            "outseam": "outseam_cm",
+            "waist_to_knee": "waist_to_knee_cm",
+            "waist_to_floor": "waist_to_floor_cm",
+            "sleeve_length": "sleeve_length_cm",
+            "arm_length": "sleeve_length_cm",
+        }
+
+        kwargs: dict[str, Any] = {
+            "gender_profile": gender_profile,
+            "source": "claude",
+        }
+        for raw_name, payload in m_in.items():
+            if not isinstance(payload, dict):
+                continue
+            attr = claude_to_body.get(raw_name) or claude_to_body.get(
+                raw_name.removesuffix("_cm")
+            )
+            if attr is None:
+                continue
+            value = payload.get("value")
+            if not isinstance(value, (int, float)) or value <= 0:
+                continue
+            confidence = payload.get("confidence", 0.5)
+            if not isinstance(confidence, (int, float)):
+                confidence = 0.5
+            confidence = max(0.0, min(1.0, float(confidence)))
+            kwargs[attr] = SingleMeasurement(
+                value_cm=round(float(value), 1),
+                confidence=round(confidence, 2),
+                source="claude",
+            )
+
+        if len([k for k in kwargs if k not in ("gender_profile", "source")]) == 0:
+            return None
+
+        return BodyMeasurements(**kwargs)
 
     def correct(
         self,

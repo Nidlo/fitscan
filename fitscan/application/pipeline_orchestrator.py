@@ -152,8 +152,11 @@ class PipelineOrchestrator:
         # Sprint 34 Phase B — process the side photo when supplied. We
         # only need its silhouette mask + a usable bounding box; pose
         # detection runs to find head + foot for vertical normalisation.
+        # `side_processed_image` is also surfaced for Phase C+ (Claude
+        # measure) so the same preprocessed bytes get reused.
         side_mask = None
         side_pose = None
+        side_processed_image: np.ndarray | None = None
         if side_image_path is not None:
             try:
                 side_image = self._loader.load(side_image_path)
@@ -162,6 +165,7 @@ class PipelineOrchestrator:
                     side_processed = self._preprocessor.process(side_image)
                     side_mask = side_processed.silhouette_mask
                     side_pose = self._pose_detector.detect(side_processed.original)
+                    side_processed_image = side_processed.original
             except Exception as e:
                 # Don't fail the whole scan on a bad side image — degrade
                 # to front-only with a logged warning. The silhouette
@@ -172,6 +176,7 @@ class PipelineOrchestrator:
                 )
                 side_mask = None
                 side_pose = None
+                side_processed_image = None
 
         # S5 — feed any low-visibility landmarks to Claude for vision-based
         # verification BEFORE measurements compute. Consent-gated by
@@ -221,6 +226,33 @@ class PipelineOrchestrator:
             except Exception as e:
                 logger.warning(f"SMPL fitting failed, using silhouette only: {e}")
                 mesh = None
+
+        # Sprint 34 Phase C+ — Claude as a co-primary measurement source.
+        # Sends both photos + height to Claude with a rigorous
+        # tape-measure-technique system prompt; Claude estimates each
+        # field with per-field confidence, and the fuser weights it
+        # alongside silhouette + SMPL by `confidence × source_priority`.
+        # Photo ships to Anthropic only when subject_id is present
+        # (consent gate); without consent the pipeline silently degrades
+        # to CV-only.
+        if claude_on and height_cm is not None and subject_id:
+            try:
+                claude_body = self._claude_validator.measure(
+                    front_image=processed.original,
+                    side_image=side_processed_image,
+                    height_cm=float(height_cm),
+                    gender_profile=gender_profile,
+                    subject_id=subject_id,
+                )
+                if claude_body is not None:
+                    sources.append(claude_body)
+                    logger.info(
+                        "Claude measure added "
+                        f"{sum(1 for f in claude_body.__dataclass_fields__ if getattr(claude_body, f, None) is not None and f not in ('gender_profile', 'source'))}"
+                        " fields to fusion"
+                    )
+            except Exception as e:
+                logger.warning(f"Claude measure skipped: {e}")
 
         fused = self._fuser.fuse(sources)
 
