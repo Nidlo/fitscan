@@ -46,7 +46,13 @@ class Settings(BaseSettings):
 
     # Feature flags
     enable_claude_validation: bool = True
-    enable_smpl_fitting: bool = True
+    # Sprint 36 Stage 1 — SMPL fitting is now off by default. The
+    # /measure/measurements path uses Claude as the primary measurer;
+    # SMPL only fits when /measure/avatar explicitly opts in (the
+    # mesh is needed for the 3D try-on render). Flipping the default
+    # avoids loading the ~750MB HMR2 checkpoint and saves 30-60s per
+    # scan on the typical measurement path.
+    enable_smpl_fitting: bool = False
     enable_avatar_generation: bool = True
     confidence_threshold: float = 0.65
     max_image_size_mb: int = 10

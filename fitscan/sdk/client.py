@@ -31,7 +31,7 @@ class FitScanClient:
         height_cm: Optional[float] = None,
         reference_object_cm: Optional[float] = None,
         gender: str = "ladies",
-        enable_smpl: bool = True,
+        enable_smpl: bool = False,
         enable_claude: bool = True,
     ) -> dict:
         """Submit a photo for body measurement."""

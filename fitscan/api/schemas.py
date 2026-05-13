@@ -13,7 +13,7 @@ class MeasureRequest(BaseModel):
     )
     reference_object_cm: Optional[float] = Field(None, ge=5, le=200)
     gender_profile: str = Field("ladies", pattern="^(ladies|men|children)$")
-    enable_smpl: bool = True
+    enable_smpl: bool = False
     enable_claude_validation: bool = True
 
 

@@ -42,8 +42,10 @@ class TestMeasurementService:
 
         mock_pipeline.run_with_mesh.assert_called_once_with(
             Path("/tmp/front.jpg"),
+            side_image_path=None,
             height_cm=170.0,
             reference_object_cm=None,
+            estimate_height=False,
             gender_profile="ladies",
             subject_id=None,
             # enable_*=None — per-call override falls back to the
@@ -73,8 +75,10 @@ class TestMeasurementService:
 
         mock_pipeline.run_with_mesh.assert_called_once_with(
             Path("/tmp/img.jpg"),
+            side_image_path=None,
             height_cm=160.0,
             reference_object_cm=21.0,
+            estimate_height=False,
             gender_profile="mens",
             subject_id="user-abc",
             enable_smpl=None,

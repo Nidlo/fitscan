@@ -205,7 +205,12 @@ def measure_body(
         ),
     ),
     gender_profile: str = Form("ladies"),
-    enable_smpl: bool = Form(True),
+    # Sprint 36 Stage 1 — default off. Measurement output now comes
+    # from Claude; SMPL fitting only runs when an avatar mesh is
+    # explicitly requested. Callers wanting the old fused output can
+    # still send `enable_smpl=true`, but it no longer changes the
+    # measurement values (mesh stops feeding fusion).
+    enable_smpl: bool = Form(False),
     enable_claude: bool = Form(True),
     subject_id: str | None = Form(
         None,
@@ -472,7 +477,8 @@ def measure_measurements_only(
     height_cm: float | None = Form(None),
     reference_object_cm: float | None = Form(None),
     gender_profile: str = Form("ladies"),
-    enable_smpl: bool = Form(True),
+    # Sprint 36 Stage 1 — see /measure for rationale.
+    enable_smpl: bool = Form(False),
     enable_claude: bool = Form(True),
     subject_id: str | None = Form(None),
     service=Depends(get_measurement_service),
@@ -533,12 +539,16 @@ def measure_avatar_only(
     content = tmp_path.read_bytes()
 
     try:
+        # /measure/avatar is the one endpoint that genuinely needs the
+        # SMPL mesh — its whole purpose is to render a GLB. Opt back in
+        # explicitly now that the global default is `enable_smpl=False`.
         result, mesh, betas, thetas = service.measure_with_mesh(
             image_path=tmp_path,
             height_cm=height_cm,
             reference_object_cm=reference_object_cm,
             gender_profile=gender_profile,
             subject_id=subject_id,
+            enable_smpl=True,
         )
         if mesh is None:
             raise HTTPException(500, "3D mesh generation failed.")

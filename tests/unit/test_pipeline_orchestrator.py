@@ -212,6 +212,87 @@ class TestPipelineOrchestrator:
 
         assert result.degraded_modes == []
 
+    def test_claude_primary_skips_silhouette_when_claude_succeeds(self, tmp_path):
+        """Sprint 36 Stage 1 — Claude is the sole measurer on the happy
+        path. When Claude returns a body, silhouette + SMPL measurers
+        MUST NOT run. They were pulling accuracy down on diverse adult
+        bodies (SMPL betas trained on a thin western distribution
+        routinely inflated circumferences 30-50%); skipping them is
+        the whole point of Stage 1.
+        """
+
+        class CountingSilhouette:
+            calls = 0
+
+            def measure(self, *args, **kwargs):
+                CountingSilhouette.calls += 1
+                return BodyMeasurements(
+                    waist_cm=SingleMeasurement(110.0, 0.7, "silhouette"),
+                    source="silhouette",
+                )
+
+        class MeasuringClaude:
+            def validate(self, *args, **kwargs):
+                return ValidationResult(True, [], 8.0, [], "proceed", "claude_ok")
+
+            def verify_landmarks(self, *args, **kwargs):
+                from fitscan.domain.models import LandmarkVerification
+
+                return LandmarkVerification(verdicts={}, raw_response="")
+
+            def estimate_height(self, *args, **kwargs):
+                return None
+
+            def measure(self, **_):
+                return BodyMeasurements(
+                    waist_cm=SingleMeasurement(95.0, 0.85, "claude"),
+                    source="claude",
+                )
+
+            def correct(self, *args, **kwargs):
+                return {}
+
+        pipeline = self._make_pipeline(
+            enable_claude=True,
+            silhouette_measurer=CountingSilhouette(),
+            claude_validator=MeasuringClaude(),
+        )
+        result = pipeline.run_with_mesh(
+            tmp_path / "x.jpg", height_cm=170.0, subject_id="test-user"
+        )
+
+        assert result.measurements.waist_cm.value_cm == 95.0
+        assert result.measurements.waist_cm.source == "claude"
+        assert (
+            CountingSilhouette.calls == 0
+        ), "Silhouette must not run when Claude provides measurements"
+
+    def test_silhouette_fallback_runs_when_claude_unavailable(self, tmp_path):
+        """The Stage-1 contract has one safety net: when Claude is off
+        (no consent, no key, API error) the silhouette measurer runs
+        so the response is never empty. Without this fallback, callers
+        without Anthropic consent would get nothing back."""
+
+        class CountingSilhouette:
+            calls = 0
+
+            def measure(self, *args, **kwargs):
+                CountingSilhouette.calls += 1
+                return BodyMeasurements(
+                    waist_cm=SingleMeasurement(110.0, 0.7, "silhouette"),
+                    source="silhouette",
+                )
+
+        # No subject_id -> Claude measurer skipped at the orchestrator level.
+        pipeline = self._make_pipeline(
+            enable_claude=True,
+            silhouette_measurer=CountingSilhouette(),
+        )
+        result = pipeline.run_with_mesh(tmp_path / "x.jpg", height_cm=170.0)
+
+        assert result.measurements.waist_cm.source == "silhouette"
+        assert CountingSilhouette.calls == 1
+
     def test_claude_corrections_apply_to_frozen_dataclass(self, tmp_path):
         """Regression: Phase C shipped with `setattr(final, …)` against a
         `@dataclass(frozen=True)` BodyMeasurements, so every correction

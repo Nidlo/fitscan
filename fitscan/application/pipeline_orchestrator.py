@@ -231,36 +231,18 @@ class PipelineOrchestrator:
         else:
             raise ValueError("Must provide height_cm or reference_object_cm for scale.")
 
+        # Sprint 36 Stage 1 — Claude is the primary measurer. The CV
+        # measurers (silhouette ellipse-perimeter, SMPL beta-fit) were
+        # pulling accuracy DOWN on diverse adult bodies (SMPL betas
+        # trained on a thin western distribution routinely inflated
+        # circumferences 30-50% on real users). They now stay around
+        # only as the no-Claude fallback: when consent gate fails, no
+        # API key, or Claude errors. SMPL still fits when the avatar
+        # route asks for a mesh (smpl_on=True), but its MEASUREMENTS
+        # no longer enter fusion — mesh is for rendering, not for
+        # estimating waistlines.
         sources: list[BodyMeasurements] = []
-        silhouette_result = self._silhouette.measure(
-            processed.silhouette_mask,
-            pose,
-            scale,
-            gender_profile=gender_profile,
-            side_mask=side_mask,
-            side_pose=side_pose,
-        )
-        sources.append(silhouette_result)
-
-        mesh: Any | None = None
-        if smpl_on:
-            try:
-                raw_mesh = self._fitter.fit(processed.original, pose)
-                mesh = self._rescale_mesh_to_height(raw_mesh, scale)
-                smpl_result = self._mesh.measure(mesh, scale, gender_profile)
-                sources.append(smpl_result)
-            except Exception as e:
-                logger.warning(f"SMPL fitting failed, using silhouette only: {e}")
-                mesh = None
-
-        # Sprint 34 Phase C+ — Claude as a co-primary measurement source.
-        # Sends both photos + height to Claude with a rigorous
-        # tape-measure-technique system prompt; Claude estimates each
-        # field with per-field confidence, and the fuser weights it
-        # alongside silhouette + SMPL by `confidence × source_priority`.
-        # Photo ships to Anthropic only when subject_id is present
-        # (consent gate); without consent the pipeline silently degrades
-        # to CV-only.
+        claude_body: BodyMeasurements | None = None
         if claude_on and height_cm is not None and subject_id:
             try:
                 claude_body = self._claude_validator.measure(
@@ -273,12 +255,46 @@ class PipelineOrchestrator:
                 if claude_body is not None:
                     sources.append(claude_body)
                     logger.info(
-                        "Claude measure added "
+                        "Claude measured "
                         f"{sum(1 for f in claude_body.__dataclass_fields__ if getattr(claude_body, f, None) is not None and f not in ('gender_profile', 'source'))}"
-                        " fields to fusion"
+                        " fields"
                     )
             except Exception as e:
-                logger.warning(f"Claude measure skipped: {e}")
+                logger.warning(f"Claude measure failed: {e}")
+                claude_body = None
+
+        if claude_body is None:
+            # Fallback: Claude unreachable (no consent, no key, API
+            # error). Use silhouette so the caller never receives an
+            # empty body. Operators see the WARNING above; the response
+            # carries the same `source='silhouette'` tag so consumers
+            # know which path produced it.
+            logger.info(
+                "Claude unavailable for measurement — falling back to silhouette"
+            )
+            silhouette_result = self._silhouette.measure(
+                processed.silhouette_mask,
+                pose,
+                scale,
+                gender_profile=gender_profile,
+                side_mask=side_mask,
+                side_pose=side_pose,
+            )
+            sources.append(silhouette_result)
+
+        # SMPL fit produces ONLY the mesh now — its measurements don't
+        # join fusion (that's the whole point of Stage 1). The avatar
+        # route consumes `mesh` directly; the measurement route ignores
+        # it. Default `enable_smpl=False` everywhere except the avatar
+        # endpoint.
+        mesh: Any | None = None
+        if smpl_on:
+            try:
+                raw_mesh = self._fitter.fit(processed.original, pose)
+                mesh = self._rescale_mesh_to_height(raw_mesh, scale)
+            except Exception as e:
+                logger.warning(f"SMPL fitting failed (mesh unavailable): {e}")
+                mesh = None
 
         fused = self._fuser.fuse(sources)
 

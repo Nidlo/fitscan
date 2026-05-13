@@ -49,7 +49,7 @@ def _resolve_anthropic_key() -> str:
 
 
 def create_pipeline(
-    enable_smpl: bool = True,
+    enable_smpl: bool = False,
     enable_claude: bool = True,
 ) -> PipelineOrchestrator:
     """Factory function: creates the fully-wired pipeline."""
