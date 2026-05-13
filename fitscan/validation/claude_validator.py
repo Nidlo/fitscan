@@ -156,7 +156,7 @@ class ClaudeValidator:
                 ],
             )
             raw = response.content[0].text
-            parsed = json.loads(raw)
+            parsed = self._parse_verdict_json(raw)
             return ValidationResult(
                 is_valid=parsed.get("is_valid", True),
                 flagged_fields=parsed.get("flagged_measurements", []),
@@ -166,7 +166,9 @@ class ClaudeValidator:
                 raw_response=raw,
             )
         except json.JSONDecodeError:
-            logger.warning("Claude returned non-JSON. Defaulting to proceed.")
+            logger.warning(
+                "Claude returned non-JSON even after fence-stripping. Defaulting to proceed."
+            )
             return self._default_result()
         except Exception as e:
             logger.warning(f"Claude validation failed: {e}")
@@ -258,6 +260,37 @@ class ClaudeValidator:
         rgb = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         _, buffer = cv2.imencode(".jpg", rgb, [cv2.IMWRITE_JPEG_QUALITY, 85])
         return base64.b64encode(buffer).decode()
+
+    def _parse_verdict_json(self, raw: str) -> dict:
+        """Extract the JSON verdict from Claude's response.
+
+        Claude occasionally wraps JSON in markdown code fences or prefixes
+        it with conversational preamble ("Here's my analysis:"), neither of
+        which `json.loads` survives. Strip a fenced block if present, else
+        fall back to the widest `{…}` span the response contains. Raises
+        `json.JSONDecodeError` only when even that span fails to parse —
+        the caller maps that to the "default to proceed" path.
+        """
+        text = raw.strip()
+        # ```json …``` or ``` …``` fences
+        if text.startswith("```"):
+            text = text.split("```", 2)[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+            if text.endswith("```"):
+                text = text[:-3].strip()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        # Preamble / suffix — grab the widest {…} span and try again
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end > start:
+            return json.loads(text[start : end + 1])
+        # Re-raise the original parse error for the caller's except clause
+        return json.loads(text)
 
     def _default_result(self) -> ValidationResult:
         return ValidationResult(
