@@ -27,20 +27,38 @@ captures: bust, waist, hip, shoulder, across back, kaba length, nape-to-waist, a
 cd fitscan
 make setup        # venv + packages + .env copy
 make db-migrate   # run PostgreSQL migrations
-make models       # download ML model weights (~2GB)
 make dev          # start on http://localhost:8000
 ```
 
 Interactive API docs: **http://localhost:8000/docs**
 
+Sprint 36 simplification — body measurement now runs through Claude Vision
+only. **`make models` (the 2GB SMPL + HMR2 download) is no longer required
+for `/api/v1/measure`**; run it only if you're deploying the 3D-avatar
+endpoint (`/measure/avatar`).
+
 ---
 
 ## Accounts & keys required
 
-| Service | Purpose | Cost | Link |
-|---------|---------|------|------|
-| **Anthropic** | Claude Vision validation | ~$0.003/photo | [console.anthropic.com](https://console.anthropic.com) |
-| **SMPL model** | 3D body model weights | Free (register) | [smpl.is.tue.mpg.de](https://smpl.is.tue.mpg.de) |
+### For body measurement (the typical deploy)
+
+| Service       | Purpose                                                | Cost              |
+|---------------|--------------------------------------------------------|-------------------|
+| **Anthropic** | Claude Vision — body measurement + landmark validation | ~$0.01-0.02/scan  |
+
+Sign up at [console.anthropic.com](https://console.anthropic.com), generate an API key, paste it into `.env` as `ANTHROPIC_API_KEY`. That's the whole external-service list — Claude does measurement, height estimation, landmark verification, and correction in one place.
+
+Pose detection (MediaPipe) is bundled in the Python deps. Body segmentation (rembg) downloads its ONNX model on first run.
+
+### For the optional 3D avatar endpoint
+
+| Service           | Purpose                          | Cost            |
+|-------------------|----------------------------------|-----------------|
+| **SMPL model**    | 3D body model weights (~100MB)   | Free (register) |
+| **HMR2 weights**  | Pose-to-3D regressor (~750MB)    | Free            |
+
+License-gated; download instructions in [docs/server-setup.md §2](docs/server-setup.md). Skip unless you need `/measure/avatar` (the GLB render route).
 
 Add to `fitscan/.env`:
 ```env
