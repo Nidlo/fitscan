@@ -88,6 +88,7 @@ class MeasurementService:
     def measure(
         self,
         image_path: str | Path,
+        side_image_path: str | Path | None = None,
         height_cm: float | None = None,
         reference_object_cm: float | None = None,
         gender_profile: str = "ladies",
@@ -100,8 +101,14 @@ class MeasurementService:
         # mesh result is discarded — callers needing it use measure_with_mesh.
         # `enable_*=None` lets the orchestrator's construction-time
         # defaults stand; concrete True/False is a per-call override.
+        # Sprint 34 Phase B — `side_image_path`, when present, lets the
+        # silhouette measurer read real body depth instead of the
+        # width × 0.6 guess.
         result = self._pipeline.run_with_mesh(
             Path(image_path),
+            side_image_path=(
+                Path(side_image_path) if side_image_path is not None else None
+            ),
             height_cm=height_cm,
             reference_object_cm=reference_object_cm,
             gender_profile=gender_profile,

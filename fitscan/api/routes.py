@@ -182,6 +182,16 @@ router = APIRouter(prefix="/api/v1", tags=["measurements"])
 @router.post("/measure", response_model=MeasurementsResponse, dependencies=_auth)
 def measure_body(
     image: UploadFile = File(..., description="Person photo (JPEG/PNG, min 720p)"),
+    side_image: UploadFile | None = File(
+        None,
+        description=(
+            "Optional left-side profile photo. When supplied, the silhouette "
+            "measurer reads body DEPTH from it (instead of guessing depth = "
+            "0.6 × width) — front + side gives a real elliptical "
+            "circumference for waist / bust / hip / thigh, much more accurate "
+            "than front-only. Sprint 34 Phase B."
+        ),
+    ),
     height_cm: float | None = Form(None),
     reference_object_cm: float | None = Form(None),
     gender_profile: str = Form("ladies"),
@@ -205,6 +215,12 @@ def measure_body(
         if not image.content_type or not image.content_type.startswith("image/"):
             error_kind = "validation"
             raise HTTPException(400, "File must be an image.")
+        if side_image is not None and (
+            not side_image.content_type
+            or not side_image.content_type.startswith("image/")
+        ):
+            error_kind = "validation"
+            raise HTTPException(400, "Side file must be an image.")
         if height_cm is None and reference_object_cm is None:
             error_kind = "validation"
             raise HTTPException(
@@ -212,9 +228,13 @@ def measure_body(
                 "Provide either height_cm or reference_object_cm.",
             )
         tmp_path = _stream_to_tempfile(image)
+        side_tmp_path = (
+            _stream_to_tempfile(side_image) if side_image is not None else None
+        )
         try:
             result = service.measure(
                 image_path=tmp_path,
+                side_image_path=side_tmp_path,
                 height_cm=height_cm,
                 reference_object_cm=reference_object_cm,
                 gender_profile=gender_profile,
@@ -231,6 +251,8 @@ def measure_body(
             raise _safe_500("measure", e) from e
         finally:
             tmp_path.unlink(missing_ok=True)
+            if side_tmp_path is not None:
+                side_tmp_path.unlink(missing_ok=True)
     finally:
         completed_at = datetime.now(timezone.utc)
         record_measurement_run(

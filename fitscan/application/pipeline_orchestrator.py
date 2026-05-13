@@ -116,6 +116,7 @@ class PipelineOrchestrator:
         subject_id: str | None = None,
         enable_smpl: bool | None = None,
         enable_claude: bool | None = None,
+        side_image_path: Path | None = None,
     ) -> PipelineResult:
         """Like `run()` but also surfaces the SMPL mesh + parameters when
         available. Used by `/measure/avatar` to render the GLB without
@@ -127,6 +128,13 @@ class PipelineOrchestrator:
         so we can't toggle the flags by rebuilding it; per-call overrides
         let `/measure/measurements` honour the form fields without
         invalidating the cache. (FS-NIDLO-MEAS-05)
+
+        `side_image_path` (Sprint 34 Phase B) — optional side-profile
+        photo. When present, the silhouette measurer reads body depth from
+        its silhouette mask instead of guessing depth = width × 0.6. This
+        is the highest-impact accuracy unlock: a single front photo can't
+        tell a deep torso from a flat one, but front + side triangulates
+        the third dimension geometrically.
         """
         # Resolve per-call overrides; None = use orchestrator default.
         smpl_on = self._enable_smpl if enable_smpl is None else enable_smpl
@@ -140,6 +148,30 @@ class PipelineOrchestrator:
 
         processed = self._preprocessor.process(image)
         pose = self._pose_detector.detect(processed.original)
+
+        # Sprint 34 Phase B — process the side photo when supplied. We
+        # only need its silhouette mask + a usable bounding box; pose
+        # detection runs to find head + foot for vertical normalisation.
+        side_mask = None
+        side_pose = None
+        if side_image_path is not None:
+            try:
+                side_image = self._loader.load(side_image_path)
+                side_ok, _ = self._loader.validate_quality(side_image)
+                if side_ok:
+                    side_processed = self._preprocessor.process(side_image)
+                    side_mask = side_processed.silhouette_mask
+                    side_pose = self._pose_detector.detect(side_processed.original)
+            except Exception as e:
+                # Don't fail the whole scan on a bad side image — degrade
+                # to front-only with a logged warning. The silhouette
+                # measurer handles `None` side_mask by falling back to
+                # the depth-from-width ratio (status quo pre-Phase-B).
+                logger.warning(
+                    f"Side image processing failed, falling back to front-only: {e}"
+                )
+                side_mask = None
+                side_pose = None
 
         # S5 — feed any low-visibility landmarks to Claude for vision-based
         # verification BEFORE measurements compute. Consent-gated by
@@ -174,6 +206,8 @@ class PipelineOrchestrator:
             pose,
             scale,
             gender_profile=gender_profile,
+            side_mask=side_mask,
+            side_pose=side_pose,
         )
         sources.append(silhouette_result)
 
