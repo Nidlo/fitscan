@@ -293,6 +293,71 @@ class TestPipelineOrchestrator:
         assert result.measurements.waist_cm.source == "silhouette"
         assert CountingSilhouette.calls == 1
 
+    def test_proportional_backfill_fires_when_bust_relative_fields_null(self):
+        """Sprint 36 booth-coverage. nipple_to_nipple, shoulder_to_nipple,
+        and shoulder_to_underbust come back null on most clothed photos
+        because Claude can't see the bust points directly. The orchestrator
+        backfills them off population-average ratios (0.21 × bust,
+        0.50 × shoulder_to_waist, 0.70 × shoulder_to_waist) so the booth
+        fields are never empty. Backfilled values carry
+        source='anthropometric_estimate' so consumers know they're derived.
+        """
+        body = BodyMeasurements(
+            bust_cm=SingleMeasurement(100.0, 0.85, "claude"),
+            shoulder_to_waist_cm=SingleMeasurement(40.0, 0.85, "claude"),
+            source="claude",
+        )
+
+        out = PipelineOrchestrator._backfill_proportional_fields(body)
+
+        # nipple_to_nipple = 0.21 × bust = 21.0
+        assert out.nipple_to_nipple_cm is not None
+        assert out.nipple_to_nipple_cm.value_cm == 21.0
+        assert out.nipple_to_nipple_cm.source == "anthropometric_estimate"
+        assert out.nipple_to_nipple_cm.confidence == 0.40
+
+        # shoulder_to_nipple = 0.50 × 40 = 20.0
+        assert out.shoulder_to_nipple_cm is not None
+        assert out.shoulder_to_nipple_cm.value_cm == 20.0
+        assert out.shoulder_to_nipple_cm.source == "anthropometric_estimate"
+
+        # shoulder_to_underbust = 0.70 × 40 = 28.0
+        assert out.shoulder_to_underbust_cm is not None
+        assert out.shoulder_to_underbust_cm.value_cm == 28.0
+
+    def test_proportional_backfill_keeps_measured_values(self):
+        """Backfill must never overwrite a directly-measured value.
+        If Claude actually saw the nipple-line through a thin fabric and
+        reported a number, that's strictly better than the population
+        average — don't clobber it.
+        """
+        body = BodyMeasurements(
+            bust_cm=SingleMeasurement(100.0, 0.85, "claude"),
+            shoulder_to_waist_cm=SingleMeasurement(40.0, 0.85, "claude"),
+            nipple_to_nipple_cm=SingleMeasurement(19.5, 0.7, "claude"),
+            source="claude",
+        )
+
+        out = PipelineOrchestrator._backfill_proportional_fields(body)
+
+        # Original measured value preserved.
+        assert out.nipple_to_nipple_cm.value_cm == 19.5
+        assert out.nipple_to_nipple_cm.source == "claude"
+        # Other fields still get backfilled — the helper is per-field.
+        assert out.shoulder_to_nipple_cm.source == "anthropometric_estimate"
+
+    def test_proportional_backfill_skips_when_anchors_missing(self):
+        """No bust + no shoulder_to_waist → nothing to derive against.
+        The helper must return the input unchanged (no fabricated values).
+        """
+        body = BodyMeasurements(source="claude")
+
+        out = PipelineOrchestrator._backfill_proportional_fields(body)
+
+        assert out.nipple_to_nipple_cm is None
+        assert out.shoulder_to_nipple_cm is None
+        assert out.shoulder_to_underbust_cm is None
+
     def test_claude_corrections_apply_to_frozen_dataclass(self, tmp_path):
         """Regression: Phase C shipped with `setattr(final, …)` against a
         `@dataclass(frozen=True)` BodyMeasurements, so every correction

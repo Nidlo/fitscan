@@ -183,9 +183,13 @@ WIDTHS / SPANS (straight-line, not around-body):
   front armhole points. From a front-only photo, approximate as
   0.85 × shoulder width.
 - nipple_to_nipple: horizontal distance between the two nipple points
-  (also called bust-point span). Adult females average 18-22 cm; men
-  this is typically not measured. Skip if the person is wearing
-  loose / draped clothing that hides the bust points.
+  (also called bust-point span). On a clothed photo the nipples are
+  rarely directly visible — DO NOT return null on that basis alone.
+  Estimate from the fabric drape: women's tops drape over the bust apex,
+  so the two highest-fabric-tension points across the chest mark the
+  nipples. Adult females average 18-22 cm (0.20-0.24 × bust-width on a
+  woman with average cup size). Men this field is typically not used —
+  set to null only for men.
 
 CIRCUMFERENCE — partial (around an upper-arm-only ring):
 - around_arm_3_4: circumference at the 3/4-sleeve-line — measured
@@ -204,10 +208,15 @@ VERTICAL LENGTHS:
 - height_cm: head-top to floor, standing straight (THIS IS THE ANCHOR).
 - shoulder_to_nipple: from the shoulder-tip down the front of the body
   to the nipple line. Adult females typically 22-28 cm. Critical for
-  bust-darted bodices.
+  bust-darted bodices. If the nipple isn't directly visible through
+  the top, use the bust-apex (the point of highest fabric tension /
+  cup outline) as the proxy — DO NOT return null. Approximate as
+  0.45-0.55 × shoulder_to_waist when even the fabric apex is occluded.
 - shoulder_to_underbust: from the shoulder-tip down the front to the
   underbust line (where the bra band sits, directly under the bust).
-  Adult females typically 30-36 cm.
+  Adult females typically 30-36 cm. If the bra-line isn't visible
+  through the top, use the bust-shadow lower edge as the proxy.
+  Approximate as 0.65-0.75 × shoulder_to_waist when fully occluded.
 - shoulder_to_waist: shoulder-tip down the front to the natural waist.
 - shoulder_to_hip: shoulder-tip vertically to the fullest-hip y-position.
 - nape_to_waist / back_length: from the seventh cervical vertebra (the
@@ -395,6 +404,12 @@ class ClaudeValidator:
             response = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=512,
+                # Sprint 36 — temperature=0 makes the same photo produce
+                # the same verdict run-to-run. Default sampling
+                # (temperature≈1) was giving us waist 91 one call, 93
+                # the next, on identical inputs. Zero-temperature is
+                # the right call for evaluation/extraction tasks.
+                temperature=0.0,
                 metadata={"user_id": subject_id},
                 messages=[
                     {
@@ -465,6 +480,9 @@ class ClaudeValidator:
             response = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=512,
+                # Deterministic — same photo, same estimate. See measure()
+                # for the same fix; height-estimate had the same variance.
+                temperature=0.0,
                 metadata={"user_id": subject_id},
                 messages=[
                     {
@@ -600,6 +618,15 @@ class ClaudeValidator:
                 # truth: this needs to fit the worst-case verbose-note
                 # response with structure overhead.
                 max_tokens=4096,
+                # Sprint 36 — deterministic decoding so the same photo
+                # produces the same numbers run-to-run. The user
+                # observed waist 91 on one call and 93 on the next from
+                # the SAME image; default Claude temperature is ~1.0
+                # which is wrong for an extraction task. 0.0 is greedy
+                # decoding — pick the single most likely token at each
+                # step. We trade exploration for repeatability; that's
+                # the right trade-off here.
+                temperature=0.0,
                 metadata={"user_id": subject_id},
                 system=[
                     {
@@ -765,6 +792,9 @@ class ClaudeValidator:
                 # mid-JSON, defeating the whole point. 4096 covers the
                 # worst case (14+ flagged fields × ~250 reasoning tokens).
                 max_tokens=4096,
+                # Deterministic — same flagged-field set should produce
+                # the same corrections each run.
+                temperature=0.0,
                 metadata={"user_id": subject_id},
                 messages=[
                     {
@@ -852,6 +882,10 @@ class ClaudeValidator:
             response = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=1024,
+                # Deterministic landmark placement — same photo, same
+                # verdict. Especially important for occlusion calls
+                # where Claude has to guess at coords.
+                temperature=0.0,
                 metadata={"user_id": subject_id},
                 messages=[
                     {

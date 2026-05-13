@@ -372,6 +372,17 @@ class PipelineOrchestrator:
         # corrected may now pass; only the still-failing ones stay flagged.
         anthropometric_flags = check_anthropometric(final)
 
+        # Sprint 36 booth-coverage — proportional backfill for the
+        # bust-relative fields Claude refuses on clothed photos. Without
+        # this, the booth's nipple_to_nipple / shoulder_to_nipple /
+        # shoulder_to_underbust come back null every time on a typical
+        # T-shirt scan, which forces the designer to ask the customer
+        # to take an awkward second photo. The backfill uses
+        # population-average ratios off bust + shoulder_to_waist; values
+        # carry confidence 0.40 and source="anthropometric_estimate" so
+        # consumers know these are derived, not measured.
+        final = self._backfill_proportional_fields(final)
+
         logger.info(
             f"Pipeline complete. Height: {final.height_cm} "
             f"corrections={applied_corrections} flags={anthropometric_flags}"
@@ -388,6 +399,57 @@ class PipelineOrchestrator:
             pose=pose,
             degraded_modes=degraded_modes,
         )
+
+    @staticmethod
+    def _backfill_proportional_fields(
+        measurements: BodyMeasurements,
+    ) -> BodyMeasurements:
+        """Fill in null bust-relative fields from population-average ratios.
+
+        Nipples + bust-apex landmarks aren't visible through clothing,
+        so Claude correctly returns null for nipple_to_nipple,
+        shoulder_to_nipple, and shoulder_to_underbust on clothed photos.
+        This helper backfills them off:
+
+          - nipple_to_nipple ≈ 0.21 × bust (≈ 19-22 cm on a typical
+            adult bust, matching the ISO-derived 0.20-0.24 band)
+          - shoulder_to_nipple ≈ 0.50 × shoulder_to_waist
+          - shoulder_to_underbust ≈ 0.70 × shoulder_to_waist
+
+        Values get `source="anthropometric_estimate"` and `confidence=0.40`
+        so downstream consumers (and the FE's low-confidence badge) can
+        distinguish derived from directly-measured. Skips when the
+        anchor fields are themselves null — no point hallucinating off
+        nothing.
+        """
+        from fitscan.domain.models import SingleMeasurement
+
+        replacements: dict[str, Any] = {}
+        bust = measurements.bust_cm
+        s_to_waist = measurements.shoulder_to_waist_cm
+
+        if measurements.nipple_to_nipple_cm is None and bust is not None:
+            replacements["nipple_to_nipple_cm"] = SingleMeasurement(
+                value_cm=round(0.21 * bust.value_cm, 1),
+                confidence=0.40,
+                source="anthropometric_estimate",
+            )
+        if measurements.shoulder_to_nipple_cm is None and s_to_waist is not None:
+            replacements["shoulder_to_nipple_cm"] = SingleMeasurement(
+                value_cm=round(0.50 * s_to_waist.value_cm, 1),
+                confidence=0.40,
+                source="anthropometric_estimate",
+            )
+        if measurements.shoulder_to_underbust_cm is None and s_to_waist is not None:
+            replacements["shoulder_to_underbust_cm"] = SingleMeasurement(
+                value_cm=round(0.70 * s_to_waist.value_cm, 1),
+                confidence=0.40,
+                source="anthropometric_estimate",
+            )
+
+        if not replacements:
+            return measurements
+        return replace(measurements, **replacements)
 
     @staticmethod
     def _rescale_mesh_to_height(mesh: Any, scale: Any) -> Any:
