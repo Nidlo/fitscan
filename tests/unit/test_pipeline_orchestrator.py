@@ -211,3 +211,81 @@ class TestPipelineOrchestrator:
         result = pipeline.run_with_mesh(tmp_path / "test.jpg", height_cm=170.0)
 
         assert result.degraded_modes == []
+
+    def test_claude_corrections_apply_to_frozen_dataclass(self, tmp_path):
+        """Regression: Phase C shipped with `setattr(final, …)` against a
+        `@dataclass(frozen=True)` BodyMeasurements, so every correction
+        threw "cannot assign to field" and got swallowed by the broad
+        except. The pipeline was silently never applying corrections,
+        which leaves anthropometric outliers in the response. The fix
+        rebuilds the dataclass via `dataclasses.replace`. This test pins
+        the contract: when Claude returns corrections for flagged fields,
+        the corresponding fields on the final BodyMeasurements get
+        rewritten with source='claude_corrected'.
+        """
+
+        class FlaggingSilhouette:
+            """Returns implausible values that trip the anthropometric
+            check — waist 200cm on a 170cm person is well outside the
+            0.35-0.65 waist/height band. height_cm must be on the
+            BodyMeasurements too so the ratio checks have a denominator."""
+
+            def measure(self, mask, pose, scale, **kwargs):
+                return BodyMeasurements(
+                    height_cm=SingleMeasurement(170.0, 0.95, "user_input"),
+                    waist_cm=SingleMeasurement(200.0, 0.7, "silhouette"),
+                    hip_cm=SingleMeasurement(210.0, 0.7, "silhouette"),
+                    source="silhouette",
+                )
+
+        class CorrectingClaude:
+            def validate(self, image, measurements, subject_id=None):
+                return ValidationResult(
+                    is_valid=True,
+                    flagged_fields=[],
+                    photo_quality_score=8.0,
+                    quality_issues=[],
+                    recommendation="proceed",
+                    raw_response="claude_ok",
+                )
+
+            def verify_landmarks(self, image, occluded, subject_id=None):
+                from fitscan.domain.models import LandmarkVerification
+
+                return LandmarkVerification(verdicts={}, raw_response="")
+
+            def estimate_height(self, image, subject_id=None, min_confidence=0.5):
+                return None
+
+            def measure(self, **_):
+                return None
+
+            def correct(
+                self,
+                image,
+                measurements,
+                flagged_fields,
+                height_cm,
+                subject_id=None,
+                min_confidence=0.6,
+            ):
+                # Claude says the true values are 95 and 100.
+                return {"waist_cm": 95.0, "hip_cm": 100.0}
+
+        pipeline = self._make_pipeline(
+            enable_claude=True,
+            silhouette_measurer=FlaggingSilhouette(),
+            claude_validator=CorrectingClaude(),
+        )
+        result = pipeline.run_with_mesh(
+            tmp_path / "test.jpg", height_cm=170.0, subject_id="test-subject"
+        )
+
+        assert result.measurements.waist_cm is not None
+        assert result.measurements.waist_cm.value_cm == 95.0
+        assert result.measurements.waist_cm.source == "claude_corrected"
+        assert result.measurements.hip_cm.value_cm == 100.0
+        assert result.measurements.hip_cm.source == "claude_corrected"
+        assert any(
+            mode.startswith("claude_corrections:") for mode in result.degraded_modes
+        )

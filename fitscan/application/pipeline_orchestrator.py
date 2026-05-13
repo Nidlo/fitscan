@@ -5,7 +5,7 @@ Follows the dependency injection pattern — all dependencies injected.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -329,25 +329,26 @@ class PipelineOrchestrator:
                     height_cm=float(height_cm),
                     subject_id=subject_id,
                 )
+                # BodyMeasurements is frozen=True, so setattr blows up with
+                # "cannot assign to field <name>". Build the replacement
+                # kwargs first, then rebuild the dataclass via
+                # `dataclasses.replace`. The "claude_corrected" source tag
+                # lets downstream consumers know which fields got rewritten;
+                # confidence 0.70 reflects Claude's sanity-but-not-tape
+                # accuracy.
+                replacements: dict[str, Any] = {}
                 for field_name, corrected_value in corrections.items():
                     current = getattr(final, field_name, None)
                     if current is None:
                         continue
-                    # Replace with Claude's value but keep a modest
-                    # confidence (0.70) — Claude is good at sanity but not
-                    # tape-measure-accurate. The "claude_corrected" source
-                    # tag lets downstream consumers know the value was
-                    # post-processed.
-                    setattr(
-                        final,
-                        field_name,
-                        type(current)(
-                            value_cm=round(corrected_value, 1),
-                            confidence=0.70,
-                            source="claude_corrected",
-                        ),
+                    replacements[field_name] = type(current)(
+                        value_cm=round(corrected_value, 1),
+                        confidence=0.70,
+                        source="claude_corrected",
                     )
                     applied_corrections.append(field_name)
+                if replacements:
+                    final = replace(final, **replacements)
             except Exception as e:
                 logger.warning(f"Claude correction skipped: {e}")
 
