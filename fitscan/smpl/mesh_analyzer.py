@@ -240,13 +240,20 @@ class MeshAnalyzer:
         )
 
     def _circumference_at_y(self, mesh: Any, y: float) -> float:
-        """Slice mesh at height y, return perimeter. DRY."""
+        """Slice mesh at height y, return perimeter. DRY.
+
+        trimesh 4.x makes `Entity.length` a method (it takes vertices), not
+        a property — summing `e.length for e in path2d.entities` raises
+        `unsupported operand type(s) for +: 'int' and 'method'`. The
+        Path2D-level `.length` IS still a property and gives the same
+        total without the per-entity dance.
+        """
         try:
             section = mesh.section(plane_origin=[0, y, 0], plane_normal=[0, 1, 0])
             if section is None:
                 return 0.0
             path2d, _ = section.to_planar()
-            return float(sum(e.length for e in path2d.entities))
+            return float(path2d.length)
         except Exception as e:
             logger.debug(f"Mesh section failed at y={y:.3f}: {e}")
             return 0.0
