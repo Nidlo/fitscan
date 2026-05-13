@@ -23,23 +23,37 @@ from fitscan.validation.claude_validator import ClaudeValidator
 from fitscan.validation.rule_validator import RuleValidator
 
 
+def _resolve_anthropic_key() -> str:
+    """Read ANTHROPIC_API_KEY with .env taking precedence over os.environ.
+
+    Other tools that share the user's shell (Claude Code, for one) also
+    export `ANTHROPIC_API_KEY` — typically a *session* token (`sk-ant-sid…`)
+    that the Anthropic Public API rejects with 401. Fitscan's `.env` is the
+    deploy-controlled surface for *its* Anthropic API key (`sk-ant-api03-…`),
+    and the worker can't tell a session token from an API key by inspection,
+    so the rule is: when `.env` defines the key, it wins. Falls back to
+    os.environ only when the `.env` doesn't carry one, which preserves the
+    production path where the orchestrator injects secrets as env vars and
+    there's no `.env` on disk.
+    """
+    from dotenv import dotenv_values
+
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    env_file = repo_root / ".env"
+    if env_file.exists():
+        values = dotenv_values(env_file)
+        if values.get("ANTHROPIC_API_KEY"):
+            return values["ANTHROPIC_API_KEY"]
+
+    return os.getenv("ANTHROPIC_API_KEY", "")
+
+
 def create_pipeline(
     enable_smpl: bool = True,
     enable_claude: bool = True,
 ) -> PipelineOrchestrator:
     """Factory function: creates the fully-wired pipeline."""
-    from fitscan.config import (
-        get_settings,
-    )  # local import — avoids circular at module load
-
-    settings = get_settings()
-    # os.environ wins when set (so tests using monkeypatch.setenv work
-    # without busting the lru-cached Settings instance), otherwise the
-    # Settings field — which is the only path that actually sees `.env`
-    # values, since the worker deliberately doesn't `load_dotenv()` into
-    # os.environ. See `_check_admin_key` / `_api_key_required` for the
-    # matching pattern.
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY") or settings.anthropic_api_key
+    anthropic_key = _resolve_anthropic_key()
 
     return PipelineOrchestrator(
         image_loader=ImageLoader(),
