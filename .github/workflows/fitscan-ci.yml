@@ -173,6 +173,13 @@ jobs:
             git fetch origin production
             git reset --hard origin/production
 
+            # Defensive chumpy guard — pip's resolver normally finds the
+            # existing chumpy and skips the rebuild, but any transitive bump
+            # would trigger a fresh install that fails on `import pip`
+            # under PEP 517 isolation. Same fix as install.sh + unit-tests.
+            venv/bin/pip install --upgrade pip setuptools wheel --quiet
+            venv/bin/pip install 'numpy>=1.26,<2' --quiet
+            venv/bin/pip install --no-build-isolation 'chumpy>=0.70' --quiet
             venv/bin/pip install -e . --quiet
             venv/bin/alembic upgrade head
             sudo systemctl restart fitscan
