@@ -72,7 +72,10 @@ Rules:
 - flattering_silhouettes: 3-5 short descriptors
 - recommended_specializations: 1-3 slugs from the list above
   (or empty array if none fit)
-- summary: 2-4 sentences, second-person ("Your shape..."); aim for 400-1000 characters total, hard ceiling 1400. Never wrap in quotes. Use {display_unit} for any numeric measurement you mention.
+- summary: 2-4 sentences, second-person ("Your shape...");
+  aim for 400-1000 characters total, hard ceiling 1400.
+  Never wrap in quotes.
+  Use {display_unit} for any numeric measurement you mention.
 """
 
 # Defensive ceiling matched to StyleProfileResponse.summary's max_length.

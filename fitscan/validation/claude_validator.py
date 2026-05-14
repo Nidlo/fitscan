@@ -241,7 +241,8 @@ RESPONSE FORMAT — ONLY valid JSON, no prose, no markdown fences:
   "photo_quality": {
     "front_score": <0-10>,
     "side_score": <0-10 or null if no side photo>,
-    "issues": ["loose_clothing"|"bad_lighting"|"partial_body"|"motion_blur"|"obscured_limbs"|"bad_angle"|...]
+    "issues": ["loose_clothing"|"bad_lighting"|"partial_body"
+               |"motion_blur"|"obscured_limbs"|"bad_angle"|...]
   },
   "global_note": "<one-sentence overall assessment>"
 }
@@ -445,7 +446,8 @@ class ClaudeValidator:
             )
         except json.JSONDecodeError:
             logger.warning(
-                "Claude returned non-JSON even after fence-stripping. Defaulting to proceed."
+                "Claude returned non-JSON even after fence-stripping. "
+                "Defaulting to proceed."
             )
             return self._default_result()
         except Exception as e:

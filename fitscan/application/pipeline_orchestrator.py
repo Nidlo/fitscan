@@ -254,11 +254,13 @@ class PipelineOrchestrator:
                 )
                 if claude_body is not None:
                     sources.append(claude_body)
-                    logger.info(
-                        "Claude measured "
-                        f"{sum(1 for f in claude_body.__dataclass_fields__ if getattr(claude_body, f, None) is not None and f not in ('gender_profile', 'source'))}"
-                        " fields"
+                    field_count = sum(
+                        1
+                        for f in claude_body.__dataclass_fields__
+                        if getattr(claude_body, f, None) is not None
+                        and f not in ("gender_profile", "source")
                     )
+                    logger.info(f"Claude measured {field_count} fields")
             except Exception as e:
                 logger.warning(f"Claude measure failed: {e}")
                 claude_body = None

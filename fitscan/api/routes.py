@@ -240,7 +240,8 @@ def measure_body(
             error_kind = "validation"
             raise HTTPException(
                 400,
-                "Provide one of: height_cm, reference_object_cm, or estimate_height=true.",
+                "Provide one of: height_cm, reference_object_cm, "
+                "or estimate_height=true.",
             )
         tmp_path = _stream_to_tempfile(image)
         side_tmp_path = (
