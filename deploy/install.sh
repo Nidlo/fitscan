@@ -54,10 +54,16 @@ fi
 
 # ─── 5. Python venv in fitscan/ ───────────────────────────────────
 log "Setting up Python venv at ${FITSCAN_DIR}/venv..."
+# chumpy's setup.py does `import pip`, which fails under PEP 517 build
+# isolation. The same fix lives in .github/workflows/fitscan-ci.yml —
+# install numpy + chumpy outside isolation BEFORE the editable install,
+# so the latter sees chumpy as already-satisfied and doesn't rebuild it.
 sudo -u "${APP_USER}" bash -c "
   cd ${FITSCAN_DIR}
   python${PYTHON_VERSION} -m venv venv
-  venv/bin/pip install --upgrade pip --quiet
+  venv/bin/pip install --upgrade pip setuptools wheel --quiet
+  venv/bin/pip install 'numpy>=1.26,<2' --quiet
+  venv/bin/pip install --no-build-isolation 'chumpy>=0.70' --quiet
   venv/bin/pip install -e . psycopg2-binary pgvector --quiet
 "
 
