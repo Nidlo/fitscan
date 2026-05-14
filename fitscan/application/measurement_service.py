@@ -42,8 +42,9 @@ def _resolve_anthropic_key() -> str:
     env_file = repo_root / ".env"
     if env_file.exists():
         values = dotenv_values(env_file)
-        if values.get("ANTHROPIC_API_KEY"):
-            return values["ANTHROPIC_API_KEY"]
+        env_key = values.get("ANTHROPIC_API_KEY")
+        if env_key:
+            return env_key
 
     return os.getenv("ANTHROPIC_API_KEY", "")
 

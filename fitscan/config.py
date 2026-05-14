@@ -20,7 +20,6 @@ class Settings(BaseSettings):
     )
 
     # API
-    anthropic_api_key: str = ""
     app_env: str = "development"
     log_level: str = "INFO"
     api_port: int = 8000
