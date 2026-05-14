@@ -151,8 +151,11 @@ server-deploy: ## Pull + migrate + restart (run on the server — pulls current 
 	$(PIP) install --no-build-isolation 'chumpy>=0.70' --quiet
 	$(PIP) install -e . --quiet
 	$(ALEMBIC) upgrade head
-	sudo systemctl restart fitscan
-	@echo "$(GREEN)FitScan deployed.$(NC)"
+	# Restart all three units: API (fitscan), Celery worker, Celery beat.
+	# Beat must restart so the in-memory schedule reloads after any
+	# tasks.py edit. Worker before beat per the Requires= dependency.
+	sudo systemctl restart fitscan fitscan-worker fitscan-beat
+	@echo "$(GREEN)FitScan deployed (api + worker + beat restarted).$(NC)"
 
 server-restart: ## Restart the systemd service
 	sudo systemctl restart fitscan

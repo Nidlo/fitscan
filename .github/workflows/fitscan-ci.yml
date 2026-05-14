@@ -182,7 +182,10 @@ jobs:
             venv/bin/pip install --no-build-isolation 'chumpy>=0.70' --quiet
             venv/bin/pip install -e . --quiet
             venv/bin/alembic upgrade head
-            sudo systemctl restart fitscan
+            # All three units: API + Celery worker + Celery beat.
+            # Beat reload is needed whenever the schedule changes; safest
+            # to restart unconditionally on every deploy.
+            sudo systemctl restart fitscan fitscan-worker fitscan-beat
 
             # fitscan loads PyTorch + MediaPipe on boot — cold start takes
             # 20-30s. Poll the healthcheck every 2s for up to 60s before
