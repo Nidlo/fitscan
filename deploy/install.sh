@@ -40,8 +40,9 @@ cd / && rm -rf /tmp/pgvector_build
 # ─── 3. App user ──────────────────────────────────────────────────
 log "Creating fitscan system user..."
 id "${APP_USER}" &>/dev/null || useradd -m -s /bin/bash "${APP_USER}"
-echo "${APP_USER} ALL=(ALL) NOPASSWD: /bin/systemctl restart fitscan, /bin/systemctl status fitscan" \
-  > /etc/sudoers.d/fitscan
+cat > /etc/sudoers.d/fitscan <<SUDOERS
+${APP_USER} ALL=(ALL) NOPASSWD: /bin/systemctl restart fitscan, /bin/systemctl restart fitscan-worker, /bin/systemctl restart fitscan-beat, /bin/systemctl status fitscan, /bin/systemctl status fitscan-worker, /bin/systemctl status fitscan-beat
+SUDOERS
 chmod 0440 /etc/sudoers.d/fitscan
 
 # ─── 4. Clone FitScan repo ───────────────────────────────────────
@@ -54,11 +55,21 @@ fi
 
 # ─── 5. Python venv in fitscan/ ───────────────────────────────────
 log "Setting up Python venv at ${FITSCAN_DIR}/venv..."
+# chumpy's setup.py does `import pip`, which fails under PEP 517 build
+# isolation. The same fix lives in .github/workflows/fitscan-ci.yml —
+# install numpy + chumpy outside isolation BEFORE the editable install,
+# so the latter sees chumpy as already-satisfied and doesn't rebuild it.
 sudo -u "${APP_USER}" bash -c "
   cd ${FITSCAN_DIR}
   python${PYTHON_VERSION} -m venv venv
-  venv/bin/pip install --upgrade pip --quiet
-  venv/bin/pip install -e . psycopg2-binary pgvector --quiet
+  venv/bin/pip install --upgrade pip setuptools wheel --quiet
+  venv/bin/pip install 'numpy>=1.26,<2' --quiet
+  venv/bin/pip install --no-build-isolation 'chumpy>=0.70' --quiet
+  # Production needs the full ML stack — [ml] adds torch / mediapipe /
+  # rembg / smplx / hmr2 deps that live outside the base install. The
+  # base install alone is enough for the API surface to boot but not
+  # for actual measurement runs.
+  venv/bin/pip install -e '.[ml]' psycopg2-binary pgvector --quiet
 "
 
 # ─── 6. Environment file ──────────────────────────────────────────
@@ -116,12 +127,65 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
+log "Creating systemd service: fitscan-worker.service..."
+cat > /etc/systemd/system/fitscan-worker.service << EOF
+[Unit]
+Description=FitScan Celery worker (async tasks — retention sweep + future async measurements)
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=exec
+User=${APP_USER}
+Group=${APP_USER}
+WorkingDirectory=${FITSCAN_DIR}
+EnvironmentFile=${FITSCAN_DIR}/.env
+ExecStart=${FITSCAN_DIR}/venv/bin/celery -A fitscan.tasks worker --loglevel=info --concurrency=2
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+log "Creating systemd service: fitscan-beat.service..."
+# Beat is the periodic scheduler. Without it: daily avatar retention
+# (right-to-be-forgotten compliance) and monthly API-key quota reset
+# (without which every paid key auto-locks at quota and never recovers)
+# silently never fire. FS-NIDLO-OPS-07.
+cat > /etc/systemd/system/fitscan-beat.service << EOF
+[Unit]
+Description=FitScan Celery beat (periodic scheduler — retention + quota reset)
+After=network.target postgresql.service redis.service fitscan-worker.service
+Requires=fitscan-worker.service
+
+[Service]
+Type=exec
+User=${APP_USER}
+Group=${APP_USER}
+WorkingDirectory=${FITSCAN_DIR}
+EnvironmentFile=${FITSCAN_DIR}/.env
+ExecStart=${FITSCAN_DIR}/venv/bin/celery -A fitscan.tasks beat --loglevel=info
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 systemctl daemon-reload
-systemctl enable fitscan
-systemctl start fitscan
+systemctl enable fitscan fitscan-worker fitscan-beat
+systemctl start fitscan fitscan-worker fitscan-beat
 sleep 3
-systemctl is-active --quiet fitscan && log "FitScan service running on :${PORT}" || \
-  die "Service failed. Check: sudo journalctl -u fitscan -n 50"
+systemctl is-active --quiet fitscan && log "FitScan API running on :${PORT}" || \
+  die "fitscan.service failed. Check: sudo journalctl -u fitscan -n 50"
+systemctl is-active --quiet fitscan-worker && log "FitScan worker running" || \
+  warn "fitscan-worker not active. Check: sudo journalctl -u fitscan-worker -n 50"
+systemctl is-active --quiet fitscan-beat && log "FitScan beat running" || \
+  warn "fitscan-beat not active. Check: sudo journalctl -u fitscan-beat -n 50"
 
 # ─── 10. Summary ──────────────────────────────────────────────────
 echo ""
@@ -131,17 +195,24 @@ echo -e "${GREEN}╚════════════════════
 echo ""
 echo "  Running at:   http://127.0.0.1:${PORT}  (internal only)"
 echo "  API docs:     http://127.0.0.1:${PORT}/docs"
-echo "  Service:      sudo systemctl status fitscan"
+echo "  Services:     sudo systemctl status fitscan fitscan-worker fitscan-beat"
 echo "  Logs:         sudo journalctl -u fitscan -f"
+echo "                sudo journalctl -u fitscan-worker -f"
+echo "                sudo journalctl -u fitscan-beat -f"
 echo "  App path:     ${FITSCAN_DIR}"
 echo ""
 echo -e "${YELLOW}Required next steps:${NC}"
 echo "  1. Edit ${FITSCAN_DIR}/.env — set ANTHROPIC_API_KEY=sk-ant-..."
-echo "  2. Download SMPL model from https://smpl.is.tue.mpg.de/"
+echo "     and FITSCAN_ADMIN_API_KEY (generate via:"
+echo "     sudo -u fitscan ${FITSCAN_DIR}/venv/bin/python -m fitscan.cli set-admin-key)"
+echo "  2. Download SMPL model from https://smpl.is.tue.mpg.de/  (only if"
+echo "     ENABLE_SMPL_FITTING=true — defaults to false since Sprint 36)"
 echo "     Place SMPL_NEUTRAL.pkl at ${FITSCAN_DIR}/data/models/smpl/"
 echo "  3. sudo -u fitscan bash -c 'cd ${FITSCAN_DIR} && venv/bin/python scripts/download_models.py'"
-echo "  4. sudo systemctl restart fitscan"
+echo "  4. sudo systemctl restart fitscan fitscan-worker fitscan-beat"
 echo "  5. curl http://127.0.0.1:${PORT}/api/v1/health"
+echo "  6. Verify beat is firing: 'sudo journalctl -u fitscan-beat -n 20'"
+echo "     (look for 'Scheduler: Sending due task ...')"
 echo ""
 echo -e "${YELLOW}Add to your StitchHub Nginx config:${NC}"
 echo "  # FitScan is internal — StitchHub calls it at 127.0.0.1:${PORT}"

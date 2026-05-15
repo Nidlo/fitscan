@@ -12,17 +12,31 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, Request
 
-from .dependencies import verify_admin_key
+from .dependencies import (
+    _check_admin_key,
+)  # noqa: F401 — re-exported for back-compat
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
-# Backwards-compat alias — older imports inside this module still
-# reference the underscore-prefixed name; new call-sites import
-# `verify_admin_key` from `.dependencies` directly. Keeping the alias
-# avoids touching every internal use in this file.
-_verify_admin_key = verify_admin_key
+
+def _verify_admin_key(
+    x_admin_api_key: str | None,
+    request: Request | None = None,
+) -> None:
+    """Internal facade: calls _check_admin_key with the client host
+    extracted from the Request (when supplied) so the
+    FITSCAN_ALLOW_UNAUTHED_LOCALHOST bypass can fire on loopback dev
+    traffic. Routes pass the Request through; manual non-HTTP callers
+    pass None and the bypass simply doesn't apply.
+    """
+    client_host = (
+        request.client.host
+        if request is not None and request.client is not None
+        else None
+    )
+    _check_admin_key(x_admin_api_key, client_host=client_host)
 
 
 def _gather_celery_status() -> dict[str, Any]:
@@ -84,11 +98,12 @@ def _gather_celery_status() -> dict[str, Any]:
 
 @router.get("/celery/status", dependencies=[])
 def celery_status(
+    request: Request,
     x_admin_api_key: Annotated[str | None, Header(alias="X-Admin-API-Key")] = None,
 ) -> dict[str, Any]:
     """FS-NIDLO-OPS-01 / QA-AD-OPS-010 — Returns worker + queue + beat
     health for the Nidlo admin's Operations panel. Read-only."""
-    _verify_admin_key(x_admin_api_key)
+    _verify_admin_key(x_admin_api_key, request=request)
     return _gather_celery_status()
 
 
@@ -226,6 +241,7 @@ def _gather_usage(start: datetime, end: datetime) -> dict[str, Any]:
 
 @router.get("/usage")
 def usage(
+    request: Request,
     x_admin_api_key: Annotated[str | None, Header(alias="X-Admin-API-Key")] = None,
     days: int = 30,
 ) -> dict[str, Any]:
@@ -234,7 +250,7 @@ def usage(
     30). Anthropic spend is intentionally NOT included here — it lives
     in Anthropic's billing console and is linked from the admin
     report's footer."""
-    _verify_admin_key(x_admin_api_key)
+    _verify_admin_key(x_admin_api_key, request=request)
     days = max(1, min(days, 365))
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)

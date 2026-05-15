@@ -23,6 +23,8 @@ BodyShape = Literal[
     "oval",
 ]
 
+DisplayUnit = Literal["cm", "inches"]
+
 
 class StyleProfileRequest(BaseModel):
     """Inbound request from the Laravel backend."""
@@ -56,6 +58,15 @@ class StyleProfileRequest(BaseModel):
         description="Slugs of specializations the platform supports.",
     )
 
+    # Whether the summary's prose should refer to measurements in cm or
+    # inches. The body data itself is always sent in mm — this only
+    # controls how Claude writes the natural-language paragraph. Defaults
+    # to cm to preserve the prior behaviour.
+    display_unit: DisplayUnit = Field(
+        default="cm",
+        description="Unit Claude should use when citing measurements in the summary.",
+    )
+
 
 class StyleProfileResponse(BaseModel):
     """Returned to the backend; backend persists this as users.style_profile."""
@@ -86,7 +97,12 @@ class StyleProfileResponse(BaseModel):
     summary: str = Field(
         description="One-paragraph natural language style summary.",
         min_length=20,
-        max_length=600,
+        # 1500 ≈ 4–5 sentences of typical English prose. Claude's
+        # second-person summaries with a measurements-grounded body-shape
+        # description often run 700–1200 chars; the old 600 cap rejected
+        # real classifications and forced the deterministic fallback,
+        # losing the actual answer the user paid for.
+        max_length=1500,
     )
 
     # Indicates the response came from the rule-based / stub path

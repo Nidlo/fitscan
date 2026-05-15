@@ -20,7 +20,6 @@ class Settings(BaseSettings):
     )
 
     # API
-    anthropic_api_key: str = ""
     app_env: str = "development"
     log_level: str = "INFO"
     api_port: int = 8000
@@ -46,7 +45,13 @@ class Settings(BaseSettings):
 
     # Feature flags
     enable_claude_validation: bool = True
-    enable_smpl_fitting: bool = True
+    # Sprint 36 Stage 1 — SMPL fitting is now off by default. The
+    # /measure/measurements path uses Claude as the primary measurer;
+    # SMPL only fits when /measure/avatar explicitly opts in (the
+    # mesh is needed for the 3D try-on render). Flipping the default
+    # avoids loading the ~750MB HMR2 checkpoint and saves 30-60s per
+    # scan on the typical measurement path.
+    enable_smpl_fitting: bool = False
     enable_avatar_generation: bool = True
     confidence_threshold: float = 0.65
     max_image_size_mb: int = 10
@@ -68,6 +73,33 @@ class Settings(BaseSettings):
     # (FS-NIDLO-OPS-01)
     sentry_dsn: str = ""
     sentry_traces_sample_rate: float = 0.1
+
+    # FS-NIDLO-OPS-12 — admin shared secret for /api/v1/admin/* and
+    # /api/v1/keys/register. Set to a long random hex via
+    # `python -m fitscan.cli set-admin-key <KEY>` or by hand.
+    fitscan_admin_api_key: str = ""
+
+    # FS-NIDLO-OPS-12 — DEV-ONLY loopback bypass. When true, requests
+    # from 127.0.0.1 / localhost / ::1 don't need X-Admin-API-Key.
+    # Production MUST keep this false.
+    fitscan_allow_unauthed_localhost: bool = False
+
+    # Anthropic API key for Claude Vision validation. Read here (rather
+    # than os.getenv-only in create_pipeline) because the worker loads
+    # `.env` exclusively through pydantic Settings — we don't push values
+    # into os.environ. See the matching pattern in `_check_admin_key` and
+    # `_api_key_required`. Empty string disables Claude validation (the
+    # rule validator still runs).
+    anthropic_api_key: str = ""
+
+    # DEV/TEST — turn off the per-tenant X-API-Key gate on /api/v1/*
+    # endpoints (measurement, style classification). Production MUST
+    # leave this true so callers must present a valid registered key.
+    # Read via this Settings field rather than os.getenv-only because
+    # the worker loads .env exclusively through pydantic Settings (we
+    # don't push values into os.environ — see _check_admin_key for
+    # the same rationale).
+    fitscan_require_api_key: bool = True
 
     # Dedicated tempdir for streamed measurement uploads. Living under
     # its own root (rather than the system /tmp) lets us sweep stale
