@@ -136,12 +136,27 @@ docs: ## Export OpenAPI JSON to docs/openapi.json
 server-install: ## Run server install script (Ubuntu, run as sudo)
 	bash deploy/install.sh
 
-server-deploy: ## Pull + migrate + restart (run on the server)
-	git pull origin main
-	$(PIP) install -e . --quiet
+server-deploy: ## Pull + migrate + restart (run on the server — pulls current branch)
+	# Pull whichever branch this checkout tracks (dev-snad / development /
+	# staging / production). Hardcoding `main` would force every env onto
+	# the same code regardless of where it was deployed.
+	git fetch origin
+	git reset --hard origin/$$(git rev-parse --abbrev-ref HEAD)
+	# Defensive chumpy guard (matches install.sh + CI). pip's resolver will
+	# usually find the existing chumpy and skip the rebuild, but any
+	# transitive bump can trigger a fresh install — and chumpy's setup.py
+	# does `import pip` which fails under PEP 517 isolation.
+	$(PIP) install --upgrade pip setuptools wheel --quiet
+	$(PIP) install 'numpy>=1.26,<2' --quiet
+	$(PIP) install --no-build-isolation 'chumpy>=0.70' --quiet
+	# Production keeps the full ML stack — see install.sh for rationale.
+	$(PIP) install -e '.[ml]' --quiet
 	$(ALEMBIC) upgrade head
-	sudo systemctl restart fitscan
-	@echo "$(GREEN)FitScan deployed.$(NC)"
+	# Restart all three units: API (fitscan), Celery worker, Celery beat.
+	# Beat must restart so the in-memory schedule reloads after any
+	# tasks.py edit. Worker before beat per the Requires= dependency.
+	sudo systemctl restart fitscan fitscan-worker fitscan-beat
+	@echo "$(GREEN)FitScan deployed (api + worker + beat restarted).$(NC)"
 
 server-restart: ## Restart the systemd service
 	sudo systemctl restart fitscan

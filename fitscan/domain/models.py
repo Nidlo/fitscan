@@ -68,6 +68,11 @@ class BodyMeasurements:
     wrist_cm: Optional[SingleMeasurement] = None
     neck_cm: Optional[SingleMeasurement] = None
     thigh_cm: Optional[SingleMeasurement] = None
+    # FS-NIDLO-SMPL-09 — knee + ankle circumferences from SMPL mesh slice
+    # at the matching landmark y. Previously null because the analyzer
+    # only walked the upper-body landmark ratios.
+    knee_cm: Optional[SingleMeasurement] = None
+    ankle_cm: Optional[SingleMeasurement] = None
 
     # ── WIDTHS ───────────────────────────────────────────────────────
     shoulder_cm: Optional[SingleMeasurement] = None
@@ -85,6 +90,13 @@ class BodyMeasurements:
     # ── GARMENT LENGTHS ──────────────────────────────────────────────
     height_cm: Optional[SingleMeasurement] = None
     inseam_cm: Optional[SingleMeasurement] = None
+    # FS-NIDLO-SMPL-09 — outseam: hip side-seam to ankle (a key trouser
+    # cut measurement). waist_to_knee + waist_to_floor support skirt /
+    # kaba length defaults. Previously null because nothing in the
+    # analyzer computed them.
+    outseam_cm: Optional[SingleMeasurement] = None
+    waist_to_knee_cm: Optional[SingleMeasurement] = None
+    waist_to_floor_cm: Optional[SingleMeasurement] = None
     hip_depth_cm: Optional[SingleMeasurement] = None
     sleeve_length_cm: Optional[SingleMeasurement] = None
     blouse_length_cm: Optional[SingleMeasurement] = None

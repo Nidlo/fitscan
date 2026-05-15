@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Annotated
 
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from fitscan.application.measurement_service import (
@@ -33,13 +33,19 @@ def _api_key_required() -> bool:
 
     Set FITSCAN_REQUIRE_API_KEY=false in the test env or for trusted-network
     bypass. Production must leave this unset (defaults to true).
+
+    Reads `os.environ` first so tests using `monkeypatch.setenv` win over
+    the lru-cached Settings instance, then falls back to the Settings field
+    (which is the only path that sees `.env` values — see config.py and
+    _check_admin_key for the matching pattern).
     """
-    return os.getenv("FITSCAN_REQUIRE_API_KEY", "true").lower() not in (
-        "false",
-        "0",
-        "no",
-        "off",
-    )
+    raw = os.getenv("FITSCAN_REQUIRE_API_KEY")
+    if raw is not None:
+        return raw.lower() not in ("false", "0", "no", "off")
+
+    from fitscan.config import get_settings  # local import — avoids cold-start cost
+
+    return get_settings().fitscan_require_api_key
 
 
 def verify_api_key(
@@ -86,24 +92,50 @@ def verify_api_key(
         session.commit()
 
 
-def verify_admin_key(
-    x_admin_api_key: Annotated[str | None, Header(alias="X-Admin-API-Key")] = None,
+def _is_localhost(host: str | None) -> bool:
+    """True when the request originated from the same machine. Used by
+    the FITSCAN_ALLOW_UNAUTHED_LOCALHOST dev bypass below."""
+    if host is None:
+        return False
+    return host in ("127.0.0.1", "::1", "localhost")
+
+
+def _check_admin_key(
+    x_admin_api_key: str | None,
+    *,
+    client_host: str | None = None,
 ) -> None:
-    """Gate admin-only endpoints with `FITSCAN_ADMIN_API_KEY`.
+    """Pure check: raises HTTPException(401/503) when the key is bad
+    or missing. Handles the FITSCAN_ALLOW_UNAUTHED_LOCALHOST bypass
+    when `client_host` is supplied. Used by both the FastAPI
+    dependency below and the route handlers' inline calls.
 
-    Used by both the operational endpoints under
-    `/api/v1/admin/*` (Celery health, usage stats) AND by
-    `/api/v1/keys/register` per the FS-NIDLO-AUTH-03 lockdown
-    decision (admin-only minting; Snad issues keys via curl until
-    a Filament UI exists).
-
-    `hmac.compare_digest` for constant-time equality so a network
-    attacker can't time-leak the configured key (A-04). The
-    empty-string fall-through is deliberate: if the operator
-    forgot to set the env, EVERY request must fail rather than
-    the endpoint silently becoming public.
+    Reads via pydantic `Settings` (which loads `.env` directly via
+    `model_config.env_file`). We deliberately don't push `.env`
+    into `os.environ` because the repo's `DATABASE_URL` placeholder
+    breaks dev hosts that haven't provisioned a `fitscan` Postgres
+    role yet — Settings keeps each consumer isolated from the
+    others. We fall back to `os.getenv` so existing tests that
+    use `monkeypatch.setenv` keep working.
     """
-    expected = os.getenv("FITSCAN_ADMIN_API_KEY", "")
+    from fitscan.config import get_settings  # local import — avoids cold-start cost
+
+    settings = get_settings()
+
+    # `monkeypatch.setenv` in tests + pydantic's `.env` reader both
+    # populate `Settings`. But `os.getenv` is the only source visible
+    # when env is set AFTER `Settings()` was first constructed
+    # (`@lru_cache` keeps the first instance). Check os.environ first
+    # so tests that monkeypatch don't have to bust the cache.
+    bypass_enabled = (
+        os.getenv("FITSCAN_ALLOW_UNAUTHED_LOCALHOST", "").lower()
+        in ("true", "1", "yes", "on")
+        or settings.fitscan_allow_unauthed_localhost
+    )
+    if client_host is not None and bypass_enabled and _is_localhost(client_host):
+        return
+
+    expected = os.getenv("FITSCAN_ADMIN_API_KEY", "") or settings.fitscan_admin_api_key
     if not expected:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -117,3 +149,29 @@ def verify_admin_key(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid admin API key.",
         )
+
+
+def verify_admin_key(
+    request: Request,
+    x_admin_api_key: Annotated[str | None, Header(alias="X-Admin-API-Key")] = None,
+) -> None:
+    """FastAPI dependency wrapping `_check_admin_key`.
+
+    Used by `/api/v1/keys/register` (and any future route that wires
+    `Depends(verify_admin_key)`) per the FS-NIDLO-AUTH-03 lockdown
+    decision (admin-only minting).
+
+    `hmac.compare_digest` for constant-time equality so a network
+    attacker can't time-leak the configured key (A-04). The
+    empty-string fall-through is deliberate: if the operator
+    forgot to set the env, EVERY request must fail rather than
+    the endpoint silently becoming public.
+
+    Dev bypass: `FITSCAN_ALLOW_UNAUTHED_LOCALHOST=true` makes the
+    gate trust loopback callers without the key. Useful for local
+    Filament dashboards hitting `http://localhost:8008` while the
+    operator is wiring up the shared-secret cross-repo flow.
+    Defaults OFF — production deployments must keep the key gate.
+    """
+    client_host = request.client.host if request.client else None
+    _check_admin_key(x_admin_api_key, client_host=client_host)

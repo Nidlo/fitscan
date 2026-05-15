@@ -111,13 +111,16 @@ DATABASE_URL=postgresql://localhost/fitscan_dev
 # ── Object storage (avatars/GLB files) ────────────────
 STORAGE_BACKEND=local        # local | minio | s3
 
-# ── ML models ─────────────────────────────────────────
+# ── ML models (OPTIONAL — only needed for /measure/avatar) ────
+# Sprint 36 made Claude Vision the sole measurer on /api/v1/measure,
+# so SMPL + HMR2 are no longer required for body measurement. Set
+# these only if you're deploying the 3D-avatar endpoint.
 SMPL_MODEL_PATH=data/models/smpl/SMPL_NEUTRAL.pkl
 HMR2_CHECKPOINT_PATH=data/models/hmr2/epoch=35-step=1000000.ckpt
 
 # ── Feature flags ─────────────────────────────────────
 ENABLE_CLAUDE_VALIDATION=true
-ENABLE_SMPL_FITTING=true
+ENABLE_SMPL_FITTING=false   # Sprint 36 — Claude-primary measurement; flip to true ONLY for avatar deploys
 ENABLE_AVATAR_GENERATION=true
 CONFIDENCE_THRESHOLD=0.65
 MAX_IMAGE_SIZE_MB=10

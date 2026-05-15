@@ -8,6 +8,7 @@ the absence of an integration test is exactly how it shipped.
 
 from __future__ import annotations
 
+import importlib.util
 import inspect
 from types import SimpleNamespace
 
@@ -33,7 +34,7 @@ class TestC6MeasureWithMeshContract:
 
     def test_measure_with_mesh_signature_is_stable(self) -> None:
         """The avatar route passes these kwargs by name. If the signature
-        changes silently, the route 500s — exactly the C6 bug."""
+        changes silently, the route 500s - exactly the C6 bug."""
         sig = inspect.signature(MeasurementService.measure_with_mesh)
         param_names = list(sig.parameters.keys())
         # `self` + the kwargs the route depends on
@@ -57,11 +58,17 @@ class TestC6MeasureWithMeshContract:
         assert hints.get("return") is PipelineResult
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("trimesh") is None,
+    reason="trimesh is only installed via the [ml] extra; this test class "
+    "exercises PipelineOrchestrator._rescale_mesh_to_height which imports "
+    "trimesh lazily, so it can only run in the integration-tests CI lane.",
+)
 class TestH13MeshRescaling:
     """When the user supplies a height, the SMPL mesh must be rescaled
     from template space (~1.7m) to that height before MeshAnalyzer runs.
     Without this every output clusters around SMPL defaults regardless
-    of user input — exactly what audit FS-H13 documented."""
+    of user input - exactly what audit FS-H13 documented."""
 
     def test_rescale_returns_mesh_unchanged_when_no_target_height(self) -> None:
         original_verts = np.array([[0.0, 0.0, 0.0], [0.0, 1.7, 0.0]])
@@ -105,7 +112,7 @@ class TestH13MeshRescaling:
         assert new_height_m == pytest.approx(1.80, rel=1e-4)
 
     def test_rescale_preserves_horizontal_proportions(self) -> None:
-        """Scaling is uniform — width-to-height ratio of the mesh is
+        """Scaling is uniform - width-to-height ratio of the mesh is
         invariant. Otherwise the bust/waist circumferences come out
         anatomically wrong even if the height is right."""
         original_verts = np.array(

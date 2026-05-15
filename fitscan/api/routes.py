@@ -18,8 +18,6 @@ from fastapi.responses import FileResponse, Response
 from loguru import logger
 from sqlalchemy.orm import Session
 
-from fitscan.avatar.clothing_fitter import ClothingFitter
-from fitscan.avatar.generator import AvatarGenerator
 from fitscan.config import get_settings
 from fitscan.infrastructure.result_store import (
     APIKeyRecord,
@@ -31,7 +29,7 @@ from fitscan.infrastructure.result_store import (
 from .dependencies import get_measurement_service, verify_admin_key, verify_api_key
 from .schemas import MeasurementsResponse, OverrideResponse
 
-# S-13 / FS-NIDLO-MEAS-04 — `safe_500` shape: clients see a generic
+# S-13 / FS-NIDLO-MEAS-04 - `safe_500` shape: clients see a generic
 # message + a `trace_id` they can quote when they file a bug; the full
 # exception lands in the structured log keyed against the same
 # `trace_id`. Operators can grep one ID and see the whole stack.
@@ -62,13 +60,13 @@ def _safe_500(probe: str, exc: BaseException) -> HTTPException:
 # Reusable dependency list for routes that require API-key auth.
 _auth = [Depends(verify_api_key)]
 
-# Hard cap on image upload size — guards against OOM from a single huge JPEG.
+# Hard cap on image upload size - guards against OOM from a single huge JPEG.
 # Default 10MB matches ImageLoader.MAX_FILE_SIZE_MB; override via env.
 _MAX_UPLOAD_BYTES = int(os.getenv("FITSCAN_MAX_UPLOAD_MB", "10")) * 1024 * 1024
 
 
 # Filesystem root for stored avatar artifacts. Any path served via
-# FileResponse() must resolve inside this directory — without this guard,
+# FileResponse() must resolve inside this directory - without this guard,
 # a writable `glb_path` column (via SQLi or a future admin-panel bug)
 # could serve `/etc/passwd`, the SQLite DB itself, or the Anthropic key
 # in `.env`. Audit FS-C9.
@@ -111,7 +109,7 @@ def _stream_to_tempfile(image: UploadFile) -> Path:
     ImageLoader.MAX_FILE_SIZE_MB is consulted (audit FS-C4). Streaming
     with a running total fails fast.
 
-    Sync as of FS-NIDLO-MEAS-18 — the `/measure*` routes are now sync
+    Sync as of FS-NIDLO-MEAS-18 - the `/measure*` routes are now sync
     so FastAPI hands the whole handler to its threadpool, unblocking
     the event loop while PyTorch/MediaPipe runs. UploadFile.file is
     the underlying SpooledTemporaryFile and has a sync `read()`.
@@ -169,7 +167,7 @@ def sweep_upload_tempdir() -> int:
             if entry.stat().st_mtime < cutoff:
                 entry.unlink(missing_ok=True)
                 removed += 1
-        except OSError as e:  # noqa: BLE001 — best-effort sweep
+        except OSError as e:  # noqa: BLE001 - best-effort sweep
             logger.warning(
                 "tempdir sweep skipped {entry}: {err}", entry=str(entry), err=str(e)
             )
@@ -182,10 +180,35 @@ router = APIRouter(prefix="/api/v1", tags=["measurements"])
 @router.post("/measure", response_model=MeasurementsResponse, dependencies=_auth)
 def measure_body(
     image: UploadFile = File(..., description="Person photo (JPEG/PNG, min 720p)"),
+    side_image: UploadFile | None = File(
+        None,
+        description=(
+            "Optional left-side profile photo. When supplied, the silhouette "
+            "measurer reads body DEPTH from it (instead of guessing depth = "
+            "0.6 × width) - front + side gives a real elliptical "
+            "circumference for waist / bust / hip / thigh, much more accurate "
+            "than front-only. Sprint 34 Phase B."
+        ),
+    ),
     height_cm: float | None = Form(None),
     reference_object_cm: float | None = Form(None),
+    estimate_height: bool = Form(
+        False,
+        description=(
+            "Sprint 35 - when true AND `height_cm`+`reference_object_cm` are "
+            "both omitted, Claude estimates the person's height from the "
+            "front photo using contextual cues (door frames, furniture, body "
+            "proportions). Requires `subject_id` (consent gate). Adds ~3s of "
+            "latency for the extra Claude call."
+        ),
+    ),
     gender_profile: str = Form("ladies"),
-    enable_smpl: bool = Form(True),
+    # Sprint 36 Stage 1 - default off. Measurement output now comes
+    # from Claude; SMPL fitting only runs when an avatar mesh is
+    # explicitly requested. Callers wanting the old fused output can
+    # still send `enable_smpl=true`, but it no longer changes the
+    # measurement values (mesh stops feeding fusion).
+    enable_smpl: bool = Form(False),
     enable_claude: bool = Form(True),
     subject_id: str | None = Form(
         None,
@@ -205,18 +228,30 @@ def measure_body(
         if not image.content_type or not image.content_type.startswith("image/"):
             error_kind = "validation"
             raise HTTPException(400, "File must be an image.")
-        if height_cm is None and reference_object_cm is None:
+        if side_image is not None and (
+            not side_image.content_type
+            or not side_image.content_type.startswith("image/")
+        ):
+            error_kind = "validation"
+            raise HTTPException(400, "Side file must be an image.")
+        if height_cm is None and reference_object_cm is None and not estimate_height:
             error_kind = "validation"
             raise HTTPException(
                 400,
-                "Provide either height_cm or reference_object_cm.",
+                "Provide one of: height_cm, reference_object_cm, "
+                "or estimate_height=true.",
             )
         tmp_path = _stream_to_tempfile(image)
+        side_tmp_path = (
+            _stream_to_tempfile(side_image) if side_image is not None else None
+        )
         try:
             result = service.measure(
                 image_path=tmp_path,
+                side_image_path=side_tmp_path,
                 height_cm=height_cm,
                 reference_object_cm=reference_object_cm,
+                estimate_height=estimate_height,
                 gender_profile=gender_profile,
                 subject_id=subject_id,
                 enable_smpl=enable_smpl,
@@ -231,6 +266,8 @@ def measure_body(
             raise _safe_500("measure", e) from e
         finally:
             tmp_path.unlink(missing_ok=True)
+            if side_tmp_path is not None:
+                side_tmp_path.unlink(missing_ok=True)
     finally:
         completed_at = datetime.now(timezone.utc)
         record_measurement_run(
@@ -292,6 +329,11 @@ async def fit_garment(
     avatar = store.get_avatar(avatar_id)
     if not avatar:
         raise HTTPException(404, f"Avatar {avatar_id} not found.")
+    # Lazy: ClothingFitter top-imports trimesh ([ml] extra). Lazy keeps
+    # unit-test path-traversal coverage on routes.py working without
+    # pulling the full ML stack in.
+    from fitscan.avatar.clothing_fitter import ClothingFitter
+
     fitter = ClothingFitter()
     output_dir = Path(f"data/avatars/{avatar_id}")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -331,7 +373,7 @@ async def override_measurements(
 
 def _tier_limits() -> dict[str, int]:
     """Tier → monthly request quota, sourced from `Settings`. Single
-    source of truth — both the allowlist used for input validation and
+    source of truth - both the allowlist used for input validation and
     the limit written to the DB row come from this map. Operators can
     raise free-tier limits etc. via env without a code edit.
     (FS-NIDLO-AUTH-05)
@@ -358,7 +400,7 @@ def register_api_key(
 ):
     """Register a FitScan API key for a customer.
 
-    FS-NIDLO-AUTH-03 lockdown — admin-only. Snad mints keys via:
+    FS-NIDLO-AUTH-03 lockdown - admin-only. Snad mints keys via:
 
         curl -X POST https://fitscan.nidlo.com/api/v1/keys/register \\
              -H "X-Admin-API-Key: $FITSCAN_ADMIN_API_KEY" \\
@@ -368,7 +410,7 @@ def register_api_key(
 
     Until a Filament admin button ships, this curl is the canonical
     issuance path. The same `X-Admin-API-Key` header gates the
-    `/api/v1/admin/*` operational routes — one secret to rotate.
+    `/api/v1/admin/*` operational routes - one secret to rotate.
 
     Hardening that's been in place since pre-lockdown:
       - tier allowlist (no arbitrary string accepted)
@@ -401,7 +443,7 @@ def register_api_key(
         session.add(record)
         session.commit()
 
-    # Audit trail — every issued key gets a structured log line so abuse
+    # Audit trail - every issued key gets a structured log line so abuse
     # patterns (one IP issuing 50 keys/min, throwaway emails) surface in
     # ops dashboards even without an application-layer rate limit. The
     # raw key is NOT logged; only the SHA-256 prefix to correlate later.
@@ -427,7 +469,7 @@ def register_api_key(
     "/measure/measurements",
     response_model=MeasurementsResponse,
     tags=["Measure"],
-    summary="Measurements only — no avatar generated",
+    summary="Measurements only - no avatar generated",
     description=(
         "Faster than /measure. Returns only the 24-field measurement JSON. "
         "No GLB is generated."
@@ -439,12 +481,13 @@ def measure_measurements_only(
     height_cm: float | None = Form(None),
     reference_object_cm: float | None = Form(None),
     gender_profile: str = Form("ladies"),
-    enable_smpl: bool = Form(True),
+    # Sprint 36 Stage 1 - see /measure for rationale.
+    enable_smpl: bool = Form(False),
     enable_claude: bool = Form(True),
     subject_id: str | None = Form(None),
     service=Depends(get_measurement_service),
 ):
-    """Measurements only — skips avatar generation entirely.
+    """Measurements only - skips avatar generation entirely.
 
     `gender_profile`, `enable_smpl`, and `enable_claude` are now wired
     through to the pipeline (FS-NIDLO-MEAS-05). Previously they were
@@ -464,7 +507,7 @@ def measure_measurements_only(
             enable_claude=enable_claude,
         )
         response = MeasurementsResponse(status="success", **result)
-        response.avatar_id = None  # explicitly None — no avatar generated
+        response.avatar_id = None  # explicitly None - no avatar generated
         return response
     except HTTPException:
         raise
@@ -477,7 +520,7 @@ def measure_measurements_only(
 @router.post(
     "/measure/avatar",
     tags=["Measure"],
-    summary="Avatar only — returns GLB binary directly",
+    summary="Avatar only - returns GLB binary directly",
     description=(
         "Returns the raw GLB binary. Response Content-Type is model/gltf-binary. "
         "No measurements JSON."
@@ -492,7 +535,7 @@ def measure_avatar_only(
     subject_id: str | None = Form(None),
     service=Depends(get_measurement_service),
 ):
-    """Avatar only — returns GLB file directly as binary response."""
+    """Avatar only - returns GLB file directly as binary response."""
     if not height_cm and not reference_object_cm:
         raise HTTPException(400, "Provide height_cm or reference_object_cm.")
 
@@ -500,12 +543,16 @@ def measure_avatar_only(
     content = tmp_path.read_bytes()
 
     try:
+        # /measure/avatar is the one endpoint that genuinely needs the
+        # SMPL mesh - its whole purpose is to render a GLB. Opt back in
+        # explicitly now that the global default is `enable_smpl=False`.
         result, mesh, betas, thetas = service.measure_with_mesh(
             image_path=tmp_path,
             height_cm=height_cm,
             reference_object_cm=reference_object_cm,
             gender_profile=gender_profile,
             subject_id=subject_id,
+            enable_smpl=True,
         )
         if mesh is None:
             raise HTTPException(500, "3D mesh generation failed.")
@@ -514,6 +561,9 @@ def measure_avatar_only(
         if decoded is None:
             raise HTTPException(400, "Could not decode uploaded image.")
         source_img = cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB)
+        # Lazy: AvatarGenerator top-imports trimesh ([ml] extra).
+        from fitscan.avatar.generator import AvatarGenerator
+
         with tempfile.TemporaryDirectory() as tmpdir:
             gen = AvatarGenerator(output_dir=Path(tmpdir))
             avatar = gen.generate(

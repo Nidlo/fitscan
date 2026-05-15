@@ -47,6 +47,33 @@ class TestAuth:
         )
         assert response.status_code == 401
 
+    def test_localhost_bypass_when_flag_enabled(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Dev-only path: FITSCAN_ALLOW_UNAUTHED_LOCALHOST=true makes
+        # the admin endpoints trust any loopback caller. TestClient's
+        # default client.host is "testclient" (NOT localhost) so this
+        # exercises both branches — the test ALSO confirms a non-loopback
+        # host with the bypass enabled still fails (no escalation).
+        monkeypatch.setenv("FITSCAN_ALLOW_UNAUTHED_LOCALHOST", "true")
+        response = client.get("/api/v1/admin/celery/status")
+        # TestClient is not localhost — bypass should NOT apply.
+        assert response.status_code == 401
+
+    def test_localhost_bypass_with_loopback_client(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Force TestClient to set request.client.host = "127.0.0.1" so
+        # the bypass branch fires.
+        monkeypatch.setenv("FITSCAN_ALLOW_UNAUTHED_LOCALHOST", "true")
+        # Provide a dummy admin key so the OTHER branch (no env set)
+        # doesn't return 503 if the bypass DOESN'T fire.
+        monkeypatch.setenv("FITSCAN_ADMIN_API_KEY", "irrelevant-since-bypassed")
+
+        loopback_client = TestClient(app, client=("127.0.0.1", 12345))
+        response = loopback_client.get("/api/v1/admin/celery/status")
+        assert response.status_code == 200
+
 
 class TestSuccessShape:
     def test_returns_expected_shape_when_celery_unreachable(
