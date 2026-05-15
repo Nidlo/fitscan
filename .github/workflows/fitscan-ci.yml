@@ -1,3 +1,13 @@
+# =============================================================================
+# Two-lane setup:
+#   FAST LANE (quality):          Black + ruff + mypy. Always runs.
+#   FULL LANE (unit/integration): pytest unit + pytest integration + codecov.
+#                                 Skipped on dev-snad pushes; runs on PRs and
+#                                 on pushes to development/staging/production.
+#                                 The deploy job (production push only) chains
+#                                 off integration-tests, so production pushes
+#                                 always get the full suite.
+# =============================================================================
 name: FitScan CI/CD
 
 on:
@@ -16,7 +26,7 @@ on:
       - 'pyproject.toml'
 
 # One run per workflow per branch. Cancel an older in-progress run if a
-# new push lands — except on production, where deploy runs to the end.
+# new push lands, except on production, where deploy runs to the end.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/production' }}
@@ -51,6 +61,9 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-22.04
     needs: quality
+    # Skip on dev-snad pushes. Heavy lane runs on PR and on
+    # promotion-branch pushes (development/staging/production).
+    if: github.event_name != 'push' || github.ref != 'refs/heads/dev-snad'
     # Hard ceiling so a stuck pip install or stalled cache step can't
     # burn 20+ minutes of free-tier action time. Pytest itself is ~90s;
     # the install on cache MISS is ~15 min; the cache save is ~5 min.
@@ -67,7 +80,7 @@ jobs:
 
       # Split cache/restore + cache/save (instead of the combined
       # actions/cache@v4) so the SAVE happens as a normal step right
-      # after install — NOT as a post-step. Two consequences:
+      # after install, NOT as a post-step. Two consequences:
       #   1. The job marks complete as soon as pytest exits; dependent
       #      jobs unblock immediately rather than waiting for the
       #      multi-GB cache upload to finish.
@@ -87,7 +100,7 @@ jobs:
             py-${{ env.pythonLocation }}-${{ hashFiles('pyproject.toml') }}-unit-
             py-${{ env.pythonLocation }}-
 
-      # Unit tests install [dev] ONLY — no torch / mediapipe / rembg /
+      # Unit tests install [dev] ONLY: no torch / mediapipe / rembg /
       # onnxruntime / smplx / hmr2 deps. The whole ML stack lives in the
       # [ml] optional extra (see pyproject.toml). No chumpy bootstrap
       # needed because chumpy is in [ml] too.
@@ -129,11 +142,14 @@ jobs:
   integration-tests:
     name: Integration tests
     runs-on: ubuntu-22.04
-    # Run in PARALLEL with unit-tests after quality passes — the two
+    # Run in PARALLEL with unit-tests after quality passes; the two
     # test suites are independent and don't share state. Cuts the
     # workflow's critical path from sequential (unit + integration)
     # to max(unit, integration).
     needs: quality
+    # Skip on dev-snad pushes. Heavy lane runs on PR and on
+    # promotion-branch pushes (development/staging/production).
+    if: github.event_name != 'push' || github.ref != 'refs/heads/dev-snad'
     timeout-minutes: 25
 
     services:
@@ -159,7 +175,7 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      # Integration tests install [dev,ml] — needs the full ML stack
+      # Integration tests install [dev,ml]: needs the full ML stack
       # because real measurement pipelines run end-to-end (mediapipe
       # pose detection, rembg silhouettes, optional SMPL fit). Cache
       # key is suffixed -integration so it doesn't collide with the
@@ -232,14 +248,14 @@ jobs:
             git fetch origin production
             git reset --hard origin/production
 
-            # Defensive chumpy guard — pip's resolver normally finds the
+            # Defensive chumpy guard: pip's resolver normally finds the
             # existing chumpy and skips the rebuild, but any transitive bump
             # would trigger a fresh install that fails on `import pip`
             # under PEP 517 isolation. Same fix as install.sh + unit-tests.
             venv/bin/pip install --upgrade pip setuptools wheel --quiet
             venv/bin/pip install 'numpy>=1.26,<2' --quiet
             venv/bin/pip install --no-build-isolation 'chumpy>=0.70' --quiet
-            # Production needs the full ML stack — see pyproject.toml [ml].
+            # Production needs the full ML stack; see pyproject.toml [ml].
             venv/bin/pip install -e '.[ml]' --quiet
             venv/bin/alembic upgrade head
             # All three units: API + Celery worker + Celery beat.
@@ -247,7 +263,7 @@ jobs:
             # to restart unconditionally on every deploy.
             sudo systemctl restart fitscan fitscan-worker fitscan-beat
 
-            # fitscan loads PyTorch + MediaPipe on boot — cold start takes
+            # fitscan loads PyTorch + MediaPipe on boot; cold start takes
             # 20-30s. Poll the healthcheck every 2s for up to 60s before
             # giving up. A flat sleep+single-curl was too short.
             for i in $(seq 1 30); do
@@ -257,6 +273,6 @@ jobs:
               fi
               sleep 2
             done
-            echo "FitScan failed to come up within 60s — recent journal:"
+            echo "FitScan failed to come up within 60s. Recent journal:"
             systemctl status fitscan --no-pager | head -20 || true
             exit 1
