@@ -6,8 +6,11 @@ Verifies that the service correctly delegates to the pipeline and
 surfaces results in the expected dict shape.
 """
 
+import importlib.util
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from fitscan.application.measurement_service import MeasurementService
 from fitscan.application.pipeline_orchestrator import PipelineResult
@@ -138,13 +141,20 @@ class TestMeasurementService:
         assert betas == [0.1, 0.2]
         assert thetas == [0.0, 0.1]
 
+    @pytest.mark.skipif(
+        importlib.util.find_spec("torch") is None,
+        reason="SMPLBodyFitter imports torch at module load; this test "
+        "needs the [ml] extra installed. Runs in integration-tests CI.",
+    )
     def test_create_pipeline_uses_disable_smpl_flag(self):
         """create_pipeline(enable_smpl=False) should not instantiate SMPLBodyFitter."""
         # SMPLBodyFitter is imported LAZILY inside create_pipeline() so the
-        # base [dev] install doesn't pull in torch ([ml] extra). Patch the
-        # canonical class location, not a stale re-export on the importing
-        # module - mock.patch resolves the dotted path lazily, so this
-        # works regardless of whether the function has run yet.
+        # base [dev] install doesn't pull in torch ([ml] extra). The lazy
+        # import means mock.patch can't resolve the dotted path until the
+        # module has been imported at least once. Pre-import it (safe
+        # under the skipif above), then patch.
+        import fitscan.smpl.body_fitter  # noqa: F401
+
         with patch("fitscan.smpl.body_fitter.SMPLBodyFitter") as mock_smpl:
             from fitscan.application.measurement_service import create_pipeline
 
