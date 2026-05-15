@@ -60,6 +60,20 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
+      # Cache the entire Python toolchain dir (site-packages + bin).
+      # setup-python's `cache: pip` only caches downloads — the wheel
+      # unpack still takes ~15 min for torch + mediapipe + rembg on every
+      # run. This second layer turns the post-install pythonLocation into
+      # a restorable artefact; subsequent runs with the same pyproject.toml
+      # see "Cache restored successfully" in ~30s.
+      - name: Cache installed Python packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.pythonLocation }}
+          key: py-${{ env.pythonLocation }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            py-${{ env.pythonLocation }}-
+
       # chumpy's setup.py does `import pip`, which fails under PEP 517's
       # isolated build env. The pyproject comment documents this and
       # tells humans to install it with --no-build-isolation. CI has to
@@ -123,6 +137,16 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: pyproject.toml
+
+      # Same site-packages cache as unit-tests — see that job for rationale.
+      - name: Cache installed Python packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.pythonLocation }}
+          key: py-${{ env.pythonLocation }}-${{ hashFiles('pyproject.toml') }}-integration
+          restore-keys: |
+            py-${{ env.pythonLocation }}-${{ hashFiles('pyproject.toml') }}
+            py-${{ env.pythonLocation }}-
 
       # See unit-tests job for the chumpy --no-build-isolation rationale.
       - run: pip install --upgrade pip setuptools wheel
