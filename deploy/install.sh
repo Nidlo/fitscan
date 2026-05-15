@@ -65,7 +65,11 @@ sudo -u "${APP_USER}" bash -c "
   venv/bin/pip install --upgrade pip setuptools wheel --quiet
   venv/bin/pip install 'numpy>=1.26,<2' --quiet
   venv/bin/pip install --no-build-isolation 'chumpy>=0.70' --quiet
-  venv/bin/pip install -e . psycopg2-binary pgvector --quiet
+  # Production needs the full ML stack — [ml] adds torch / mediapipe /
+  # rembg / smplx / hmr2 deps that live outside the base install. The
+  # base install alone is enough for the API surface to boot but not
+  # for actual measurement runs.
+  venv/bin/pip install -e '.[ml]' psycopg2-binary pgvector --quiet
 "
 
 # ─── 6. Environment file ──────────────────────────────────────────

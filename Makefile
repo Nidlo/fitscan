@@ -149,7 +149,8 @@ server-deploy: ## Pull + migrate + restart (run on the server — pulls current 
 	$(PIP) install --upgrade pip setuptools wheel --quiet
 	$(PIP) install 'numpy>=1.26,<2' --quiet
 	$(PIP) install --no-build-isolation 'chumpy>=0.70' --quiet
-	$(PIP) install -e . --quiet
+	# Production keeps the full ML stack — see install.sh for rationale.
+	$(PIP) install -e '.[ml]' --quiet
 	$(ALEMBIC) upgrade head
 	# Restart all three units: API (fitscan), Celery worker, Celery beat.
 	# Beat must restart so the in-memory schedule reloads after any
