@@ -1,7 +1,7 @@
 """
 Unit tests for MeasurementService.
 
-All I/O is mocked — no real images or model weights required.
+All I/O is mocked - no real images or model weights required.
 Verifies that the service correctly delegates to the pipeline and
 surfaces results in the expected dict shape.
 """
@@ -48,7 +48,7 @@ class TestMeasurementService:
             estimate_height=False,
             gender_profile="ladies",
             subject_id=None,
-            # enable_*=None — per-call override falls back to the
+            # enable_*=None - per-call override falls back to the
             # orchestrator-level defaults set at construction time.
             # (FS-NIDLO-MEAS-05)
             enable_smpl=None,
@@ -86,7 +86,7 @@ class TestMeasurementService:
         )
 
     def test_measure_forwards_enable_smpl_and_enable_claude_overrides(self):
-        # FS-NIDLO-MEAS-05 — `/measure/measurements` exposes enable_smpl
+        # FS-NIDLO-MEAS-05 - `/measure/measurements` exposes enable_smpl
         # and enable_claude form fields. They were silently dropped
         # before; this test pins the wiring so a future refactor can't
         # quietly stop honouring them.
@@ -140,9 +140,12 @@ class TestMeasurementService:
 
     def test_create_pipeline_uses_disable_smpl_flag(self):
         """create_pipeline(enable_smpl=False) should not instantiate SMPLBodyFitter."""
-        with patch(
-            "fitscan.application.measurement_service.SMPLBodyFitter"
-        ) as mock_smpl:
+        # SMPLBodyFitter is imported LAZILY inside create_pipeline() so the
+        # base [dev] install doesn't pull in torch ([ml] extra). Patch the
+        # canonical class location, not a stale re-export on the importing
+        # module - mock.patch resolves the dotted path lazily, so this
+        # works regardless of whether the function has run yet.
+        with patch("fitscan.smpl.body_fitter.SMPLBodyFitter") as mock_smpl:
             from fitscan.application.measurement_service import create_pipeline
 
             with patch("fitscan.application.measurement_service.PipelineOrchestrator"):
