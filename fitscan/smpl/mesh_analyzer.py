@@ -79,6 +79,7 @@ class MeshAnalyzer:
         "underbust": 0.730,
         "waist": 0.635,
         "hip_fullest": 0.525,
+        "knee": 0.265,
         "nape": 0.900,
         "crotch": 0.480,
         "ankle": 0.050,
@@ -151,6 +152,12 @@ class MeshAnalyzer:
         ubw = circ("under_breast", conf=0.80)
         neck = circ("neck", conf=0.87)
         thigh = circ("thigh", conf=0.82)
+        # FS-NIDLO-SMPL-09 — knee + ankle circumferences via direct mesh
+        # slice at the landmark y. These were null until now; the analyzer
+        # already had ankle in LANDMARK_HEIGHTS for inseam math but didn't
+        # ring-slice the mesh there.
+        knee = self._circ_at_landmark(mesh, "knee", m_to_cm, conf=0.78)
+        ankle_circ_meas = self._circ_at_landmark(mesh, "ankle", m_to_cm, conf=0.75)
 
         arm_circ = self._arm_circumference(
             mesh, self.ARM_HEIGHT_RATIOS["around_arm"], m_to_cm
@@ -177,6 +184,13 @@ class MeshAnalyzer:
         nape_to_waist = self._geodesic_nape_to_waist(mesh, m_to_cm)
         hip_depth = vert_dist("waist", "hip_fullest", conf=0.88)
         inseam = vert_dist("crotch", "ankle", conf=0.83)
+        # FS-NIDLO-SMPL-09 — three new tailor-book length fields. outseam
+        # is the side-seam from hip to ankle (THE measurement for trouser
+        # cut). waist_to_knee + waist_to_floor are length defaults for
+        # skirt + kaba garments.
+        outseam = vert_dist("hip_fullest", "ankle", conf=0.85)
+        waist_to_knee = vert_dist("waist", "knee", conf=0.85)
+        waist_to_floor = vert_dist("waist", "ankle", conf=0.82)
 
         # ── Garment/arm lengths ──
         sleeve = self._sleeve_length(mesh, m_to_cm)
@@ -208,6 +222,8 @@ class MeshAnalyzer:
             wrist_cm=wrist_circ,
             neck_cm=neck,
             thigh_cm=thigh,
+            knee_cm=knee,
+            ankle_cm=ankle_circ_meas,
             shoulder_cm=shoulder_w,
             across_back_cm=across_back_w,
             across_chest_cm=across_chest_w,
@@ -221,6 +237,9 @@ class MeshAnalyzer:
             nape_to_waist_cm=nape_to_waist,
             height_cm=height_m,
             inseam_cm=inseam,
+            outseam_cm=outseam,
+            waist_to_knee_cm=waist_to_knee,
+            waist_to_floor_cm=waist_to_floor,
             hip_depth_cm=hip_depth,
             sleeve_length_cm=sleeve,
             blouse_length_cm=(blouse_len if gender_profile == "ladies" else None),
@@ -239,14 +258,46 @@ class MeshAnalyzer:
             source="smpl",
         )
 
+    def _circ_at_landmark(
+        self,
+        mesh: Any,
+        landmark: str,
+        m_to_cm: float,
+        conf: float,
+    ) -> Optional[SingleMeasurement]:
+        """Circumference of the mesh at a named LANDMARK_HEIGHTS y. DRY helper
+        for `circ()`-style measurements that don't have a matching key in
+        `_CIRCUMFERENCE_HEIGHTS_*` — e.g. knee + ankle, which use the
+        skeletal-landmark ratios rather than gendered torso ratios.
+        """
+        if landmark not in self.LANDMARK_HEIGHTS:
+            return None
+        y_min, y_max = mesh.bounds[0][1], mesh.bounds[1][1]
+        y_cut = y_min + self.LANDMARK_HEIGHTS[landmark] * (y_max - y_min)
+        perimeter = self._circumference_at_y(mesh, y_cut)
+        if perimeter <= 0:
+            return None
+        return SingleMeasurement(
+            value_cm=round(perimeter * m_to_cm, 1),
+            confidence=conf,
+            source="smpl",
+        )
+
     def _circumference_at_y(self, mesh: Any, y: float) -> float:
-        """Slice mesh at height y, return perimeter. DRY."""
+        """Slice mesh at height y, return perimeter. DRY.
+
+        trimesh 4.x makes `Entity.length` a method (it takes vertices), not
+        a property — summing `e.length for e in path2d.entities` raises
+        `unsupported operand type(s) for +: 'int' and 'method'`. The
+        Path2D-level `.length` IS still a property and gives the same
+        total without the per-entity dance.
+        """
         try:
             section = mesh.section(plane_origin=[0, y, 0], plane_normal=[0, 1, 0])
             if section is None:
                 return 0.0
             path2d, _ = section.to_planar()
-            return float(sum(e.length for e in path2d.entities))
+            return float(path2d.length)
         except Exception as e:
             logger.debug(f"Mesh section failed at y={y:.3f}: {e}")
             return 0.0

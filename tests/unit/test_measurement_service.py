@@ -1,13 +1,16 @@
 """
 Unit tests for MeasurementService.
 
-All I/O is mocked — no real images or model weights required.
+All I/O is mocked - no real images or model weights required.
 Verifies that the service correctly delegates to the pipeline and
 surfaces results in the expected dict shape.
 """
 
+import importlib.util
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from fitscan.application.measurement_service import MeasurementService
 from fitscan.application.pipeline_orchestrator import PipelineResult
@@ -42,11 +45,13 @@ class TestMeasurementService:
 
         mock_pipeline.run_with_mesh.assert_called_once_with(
             Path("/tmp/front.jpg"),
+            side_image_path=None,
             height_cm=170.0,
             reference_object_cm=None,
+            estimate_height=False,
             gender_profile="ladies",
             subject_id=None,
-            # enable_*=None — per-call override falls back to the
+            # enable_*=None - per-call override falls back to the
             # orchestrator-level defaults set at construction time.
             # (FS-NIDLO-MEAS-05)
             enable_smpl=None,
@@ -73,8 +78,10 @@ class TestMeasurementService:
 
         mock_pipeline.run_with_mesh.assert_called_once_with(
             Path("/tmp/img.jpg"),
+            side_image_path=None,
             height_cm=160.0,
             reference_object_cm=21.0,
+            estimate_height=False,
             gender_profile="mens",
             subject_id="user-abc",
             enable_smpl=None,
@@ -82,7 +89,7 @@ class TestMeasurementService:
         )
 
     def test_measure_forwards_enable_smpl_and_enable_claude_overrides(self):
-        # FS-NIDLO-MEAS-05 — `/measure/measurements` exposes enable_smpl
+        # FS-NIDLO-MEAS-05 - `/measure/measurements` exposes enable_smpl
         # and enable_claude form fields. They were silently dropped
         # before; this test pins the wiring so a future refactor can't
         # quietly stop honouring them.
@@ -134,11 +141,21 @@ class TestMeasurementService:
         assert betas == [0.1, 0.2]
         assert thetas == [0.0, 0.1]
 
+    @pytest.mark.skipif(
+        importlib.util.find_spec("torch") is None,
+        reason="SMPLBodyFitter imports torch at module load; this test "
+        "needs the [ml] extra installed. Runs in integration-tests CI.",
+    )
     def test_create_pipeline_uses_disable_smpl_flag(self):
         """create_pipeline(enable_smpl=False) should not instantiate SMPLBodyFitter."""
-        with patch(
-            "fitscan.application.measurement_service.SMPLBodyFitter"
-        ) as mock_smpl:
+        # SMPLBodyFitter is imported LAZILY inside create_pipeline() so the
+        # base [dev] install doesn't pull in torch ([ml] extra). The lazy
+        # import means mock.patch can't resolve the dotted path until the
+        # module has been imported at least once. Pre-import it (safe
+        # under the skipif above), then patch.
+        import fitscan.smpl.body_fitter  # noqa: F401
+
+        with patch("fitscan.smpl.body_fitter.SMPLBodyFitter") as mock_smpl:
             from fitscan.application.measurement_service import create_pipeline
 
             with patch("fitscan.application.measurement_service.PipelineOrchestrator"):
