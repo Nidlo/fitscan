@@ -1,6 +1,6 @@
 """
 Root conftest.py. Loaded before any test module.
-Forces all tests to use .env.test — never .env or production values.
+Forces all tests to use .env.test, never .env or production values.
 """
 
 import os
@@ -34,13 +34,14 @@ def enforce_test_env():
 
 @pytest.fixture(autouse=True)
 def _reset_anthropic_client_cache():
-    """The validator memoizes Anthropic clients per-key (FS-NIDLO-OPS-05);
+    """The API provider memoizes Anthropic clients per-key (FS-NIDLO-OPS-05);
     that's a connection-pool optimisation in production but in tests
     causes cross-test bleed when several tests reuse the same fake
-    api_key — the second test's monkeypatched `Anthropic` class never
+    api_key, the second test's monkeypatched `Anthropic` class never
     runs because the first test's cached instance is returned. Clear
-    the lru_cache between tests."""
-    from fitscan.validation.claude_validator import _anthropic_client
+    the lru_cache between tests. (Moved to fitscan.llm.anthropic_api_provider
+    when the LLM-provider seam was introduced.)"""
+    from fitscan.llm.anthropic_api_provider import _anthropic_client
 
     _anthropic_client.cache_clear()
     yield
