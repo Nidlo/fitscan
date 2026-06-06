@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
-from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import cv2
@@ -21,36 +21,12 @@ from fitscan.domain.models import (
     SingleMeasurement,
     ValidationResult,
 )
-
-
-@lru_cache(maxsize=4)
-def _anthropic_client(api_key: str) -> Any:
-    """Memoize one Anthropic client per API key (FS-NIDLO-OPS-05).
-
-    Constructing `Anthropic(...)` per call (the previous shape) tore
-    down + rebuilt the underlying httpx connection pool every time,
-    measurably increasing tail latency under load. A module-level
-    `lru_cache` keyed on the API key keeps a stable client per key
-    (we only ever have one in practice; the cache size is room for
-    test fixtures that mint per-test keys).
-
-    NOTE — prompt caching: marking the static
-    `VALIDATION_PROMPT` / `LANDMARK_VERIFICATION_PROMPT` blocks with
-    `cache_control={"type": "ephemeral"}` was considered. It does not
-    help here: every call carries a unique user photo as the first
-    content block, which invalidates the cache boundary regardless
-    of what we mark on the text block. Revisit if we ever pre-bind
-    the rules into a `system=` parameter (Anthropic caches system
-    blocks independently).
-    """
-    from anthropic import Anthropic
-
-    return Anthropic(api_key=api_key)
-
+from fitscan.llm.anthropic_api_provider import AnthropicApiProvider
+from fitscan.llm.provider import LLMProvider
 
 LANDMARK_VERIFICATION_PROMPT = """
 You are a body-landmark verification assistant for a fashion-tech CV pipeline.
-The pipeline detected these landmarks at low visibility — clothing folds,
+The pipeline detected these landmarks at low visibility, clothing folds,
 shadows, hair, or pose may be hiding them. Look at the photo and place each
 one as best you can.
 
@@ -107,7 +83,7 @@ Rules:
 #
 # Sprint 34 Phase C+. Per-field technique distilled from the Bishop
 # Fabric Tailor's Companion and standard ISO 8559-1 anthropometric
-# definitions — the precise locations real tailors measure at.
+# definitions, the precise locations real tailors measure at.
 MEASUREMENT_TECHNIQUE_SYSTEM = """\
 You are a senior tape-measure-trained body-measurement expert helping a
 fashion app extract garment measurements from photos. You analyse a FRONT
@@ -117,9 +93,54 @@ arms slightly away from sides, and report measurements in centimetres.
 CRITICAL: the person's stated `height_cm` is your absolute scale anchor.
 Head-top-to-floor in the FRONT photo represents that many cm. Calibrate
 every other measurement off it. Do not assume the camera was at any
-particular distance — only the height anchor is reliable.
+particular distance, only the height anchor is reliable.
 
-CIRCUMFERENCE PROTOCOL — read this carefully, the previous prompt phrased
+REPEATABILITY PROTOCOL (read first; it governs every field):
+The SAME photo must produce the SAME numbers every time you are asked. There
+is exactly one correct value per field for this body; your job is to converge
+on it, not to re-decide it. For EACH field, follow this fixed procedure:
+1. Resolve the landmark using the EXACT definition given below, never a "roughly
+   around here" guess. The same landmark must map to the same body location on
+   every run.
+2. Measure the field THREE times independently with the procedure, then report
+   the MEDIAN of the three reads. The median rejects a single stray estimate,
+   which is the main source of run-to-run spikes.
+3. Express the value as a fraction of the height anchor, sanity-check it against
+   the ratio bounds at the bottom, then convert back to cm.
+4. Round the final value to the nearest 0.5 cm. Do not report sub-0.5cm digits;
+   they are noise, not signal.
+Report one value per field, your median. No ranges, no hedging inside the value.
+Stability first: a value that is consistent and within ~1cm of truth beats one
+that is occasionally exact but swings several cm between runs.
+
+STEP 0, CHARACTERISE THE BODY BEFORE YOU MEASURE (this anchors every number):
+Before producing a single measurement, look at the whole person and commit to a
+short description. Write it into the `body` object of your response FIRST, then
+measure with it in mind. Fixing the body type up front keeps the numbers
+internally consistent and stops them drifting between runs. Describe:
+1. build: one of slim | average | athletic | full | plus. This sets the
+   width-to-height expectation for every circumference.
+2. shape: one of rectangle | hourglass | pear | inverted_triangle | oval, which
+   fixes the bust/waist/hip relationship you must stay consistent with:
+     - hourglass: bust about equal to hip, waist clearly smaller than both
+     - pear: hip larger than bust, waist defined
+     - inverted_triangle: bust and shoulders larger than hip
+     - rectangle: bust, waist and hip similar, little waist definition
+     - oval: waist at least as large as bust and hip, midsection fullest
+3. orientation: how the body faces the camera, e.g. "front square, slight left
+   turn, arms ~10cm from sides". Note any turn or lean; it changes apparent
+   widths, so account for it rather than reading the raw silhouette.
+4. pose_and_fit: standing posture and how the clothing sits, e.g. "upright,
+   fitted top, loose trousers hiding the hip line". Call out anything that
+   hides a landmark.
+5. visible_from: which landmarks the FRONT and SIDE photos actually expose, and
+   which are occluded and therefore estimated.
+Then MEASURE CONSISTENTLY WITH THIS DESCRIPTION. The body description is the
+contract every number must satisfy: if you called the body "hourglass" but the
+waist comes out larger than the hip, one of them is wrong, so re-check before
+reporting.
+
+CIRCUMFERENCE PROTOCOL, read this carefully, the previous prompt phrased
 the geometry in a way that produced 2× inflated values:
 
 1. Measure WIDTH at the relevant body level from the FRONT photo
@@ -146,7 +167,7 @@ the geometry in a way that produced 2× inflated values:
 DO NOT double the result. WIDTH and DEPTH are the *full body extents*
 (diameters), not radii. The /2 in the formula handles the geometric
 conversion. If you find yourself computing values ≥ 1.5 × height-in-cm
-for any single circumference, you've doubled by mistake — re-do that
+for any single circumference, you've doubled by mistake, re-do that
 field.
 
 WORKED EXAMPLES (commit these):
@@ -161,8 +182,16 @@ CIRCUMFERENCES (around-body, parallel to ground unless noted):
 - bust / chest: around the fullest part of the chest. For women, at the
   nipple-line; for men, at the widest pectoral. ISO 8559-1 §5.2.1.
 - under_breast / underbust: directly under the bust where a bra band sits.
-- waist: NARROWEST part of the natural waist (above the navel, below the
-  ribcage). Not the trouser-belt line.
+- waist: the NARROWEST horizontal circumference of the torso between the
+  bottom of the ribcage and the navel. THIS FIELD VARIES MOST BETWEEN RUNS, so
+  pin it with a fixed scan: step straight down from the ribcage to the navel;
+  at each level read the body width; the waist is the level with the SMALLEST
+  width. Lock that level and measure there. Do NOT use the navel line, the
+  trouser/belt line, or the widest belly point. If clothing hides the
+  narrowing, place the waist at a FIXED 0.60 of the rib-to-hip vertical
+  distance below the ribcage, so the level is identical on every run. Adult
+  waist is typically 0.40 to 0.55 of height; if your read falls outside that,
+  re-scan before reporting.
 - hip: AROUND the fullest part of the seat / buttocks, ~20cm below waist.
 - thigh: around the fullest part of the upper leg, just below the gluteal
   fold.
@@ -184,15 +213,15 @@ WIDTHS / SPANS (straight-line, not around-body):
   0.85 × shoulder width.
 - nipple_to_nipple: horizontal distance between the two nipple points
   (also called bust-point span). On a clothed photo the nipples are
-  rarely directly visible — DO NOT return null on that basis alone.
+  rarely directly visible, DO NOT return null on that basis alone.
   Estimate from the fabric drape: women's tops drape over the bust apex,
   so the two highest-fabric-tension points across the chest mark the
   nipples. Adult females average 18-22 cm (0.20-0.24 × bust-width on a
-  woman with average cup size). Men this field is typically not used —
+  woman with average cup size). Men this field is typically not used,
   set to null only for men.
 
-CIRCUMFERENCE — partial (around an upper-arm-only ring):
-- around_arm_3_4: circumference at the 3/4-sleeve-line — measured
+CIRCUMFERENCE, partial (around an upper-arm-only ring):
+- around_arm_3_4: circumference at the 3/4-sleeve-line, measured
   ~6-8cm above the elbow, between the bicep and the elbow joint. Smaller
   than bicep (typically 0.85-0.92 × bicep on adult females). Use the
   same width+depth formula as bicep but read width at the 3/4 point,
@@ -200,7 +229,7 @@ CIRCUMFERENCE — partial (around an upper-arm-only ring):
 
 DEPTH MEASUREMENT (needs the SIDE photo; flag low-confidence without it):
 - hip_depth: full front-to-back extent of the hip / seat at the
-  fullest-hip y-position. This is a DEPTH, not a circumference — report
+  fullest-hip y-position. This is a DEPTH, not a circumference, report
   the raw depth in cm. From a front-only photo, estimate as
   0.70 × hip width.
 
@@ -210,7 +239,7 @@ VERTICAL LENGTHS:
   to the nipple line. Adult females typically 22-28 cm. Critical for
   bust-darted bodices. If the nipple isn't directly visible through
   the top, use the bust-apex (the point of highest fabric tension /
-  cup outline) as the proxy — DO NOT return null. Approximate as
+  cup outline) as the proxy, DO NOT return null. Approximate as
   0.45-0.55 × shoulder_to_waist when even the fabric apex is occluded.
 - shoulder_to_underbust: from the shoulder-tip down the front to the
   underbust line (where the bra band sits, directly under the bust).
@@ -228,9 +257,17 @@ VERTICAL LENGTHS:
 - sleeve_length / arm_length: shoulder-tip to wrist bone with arm
   slightly bent (~10°).
 
-RESPONSE FORMAT — ONLY valid JSON, no prose, no markdown fences:
+RESPONSE FORMAT, ONLY valid JSON, no prose, no markdown fences. Fill the
+`body` object FIRST (Step 0), then measure consistently with it:
 
 {
+  "body": {
+    "build": "<slim|average|athletic|full|plus>",
+    "shape": "<rectangle|hourglass|pear|inverted_triangle|oval>",
+    "orientation": "<how the body faces the camera, note any turn/lean>",
+    "pose_and_fit": "<posture + how the clothing sits / what it hides>",
+    "visible_from": "<landmarks the photos expose vs occlude>"
+  },
   "measurements_cm": {
     "<field_name>": {
       "value": <number>,
@@ -259,11 +296,26 @@ Bound-checks (ALWAYS, regardless of what the photo shows):
 - 0.40 ≤ bust/height ≤ 0.70
 - 0.13 ≤ bicep/height ≤ 0.30
 - 0.07 ≤ wrist/height ≤ 0.13
-- wrist < bicep, bicep < waist, ankle < knee < thigh — universal adult
+- wrist < bicep, bicep < waist, ankle < knee < thigh, universal adult
   invariants.
 
 If your visual estimate violates a bound, that's a signal you misread
-the photo — reassess with the height anchor before reporting.
+the photo, reassess with the height anchor before reporting.
+
+FINAL RECONCILIATION (do this before you output, it prevents wayward spikes):
+Re-read every value you produced. Check the invariants (wrist < bicep < waist;
+ankle < knee < thigh; under_breast < bust; waist < hip in most adults) and the
+ratio bounds above. ALSO confirm the bust/waist/hip values match the `body.shape`
+you declared in Step 0 (hourglass: waist < bust and waist < hip; pear: hip >
+bust; inverted_triangle: bust > hip; rectangle: the three are close). If ANY
+value violates an invariant, a ratio bound, or your declared shape, re-measure
+THAT field with the median-of-three procedure and replace it. Only emit JSON
+once every value passes. A single out-of-band field is the usual cause of a
+sudden several-cm jump between runs; this pass is what catches it.
+
+NOTE field discipline: keep each `note` to at most 8 words, or "" when the read
+was standard. Long free-text notes add variation without adding measurement
+signal.
 """
 
 
@@ -274,11 +326,13 @@ side_photo_provided: {has_side}
 
 Use the FRONT photo for body widths + vertical lengths. {side_clause}
 
-Return JSON only.
+Apply the REPEATABILITY PROTOCOL: median-of-three per field, snapped to the
+nearest 0.5 cm, then the FINAL RECONCILIATION pass. The same photo must yield
+near-identical numbers on every run. Return JSON only.
 """
 
 
-# Sprint 35 — height estimation from a single photo. No height anchor
+# Sprint 35, height estimation from a single photo. No height anchor
 # this time; Claude has to reason from contextual cues alone (door
 # frames, common furniture, body proportions). Doorways are typically
 # 200cm tall in West Africa, 203-213cm in the US, 210cm in Europe.
@@ -291,18 +345,18 @@ HEIGHT_ESTIMATE_PROMPT = """\
 Estimate this person's height in centimetres.
 
 You don't have a stated height to work from. Use ALL of these cues
-together — don't lean on just one:
+together, don't lean on just one:
 
-1. Background scale references — door frames (200-213 cm tall, 76-91 cm
+1. Background scale references, door frames (200-213 cm tall, 76-91 cm
    wide), kitchen counters (~90 cm), dining tables (~75 cm), door knobs
    and switches (~95-105 cm), TV stands, bookshelves. Compare the
    person's full standing height to any visible reference.
-2. Body proportions — an adult's total height is approximately 7.5 ×
+2. Body proportions, an adult's total height is approximately 7.5 ×
    their head height (head from chin to crown). If you can estimate head
    size accurately you can back out total height.
-3. Sex / gender-presentation prior — adult women average ~163 cm
+3. Sex / gender-presentation prior, adult women average ~163 cm
    globally (range 145-180+), adult men average ~175 cm (range 155-200+).
-4. Footwear visible in the photo — barefoot, flat sandals (+2 cm),
+4. Footwear visible in the photo, barefoot, flat sandals (+2 cm),
    sneakers (+3 cm), heels (+5-10 cm). Subtract footwear lift to get
    true skeletal height.
 
@@ -324,18 +378,18 @@ Confidence guide:
 - < 0.5 = don't trust; refuse with height_cm: null
 
 Adults only. If the photo shows a minor (< 18) return height_cm: null
-and note the reason — measurement flow is for adult bodies.
+and note the reason, measurement flow is for adult bodies.
 """
 
 
 CORRECTION_PROMPT = """
 You are a body-measurement vision expert helping a fashion app recover from a
 CV pipeline that gave low-confidence values. The person in the photo is
-{height_cm} cm tall — use that height as your scale reference (head-to-foot ≈
+{height_cm} cm tall, use that height as your scale reference (head-to-foot ≈
 {height_cm} cm).
 
 The CV pipeline produced these candidate measurements (all in cm). Some are
-suspect — listed under FLAGGED. Look at the photo, reason about each flagged
+suspect, listed under FLAGGED. Look at the photo, reason about each flagged
 measurement visually using the height anchor, and propose a corrected value
 when you are confident the CV was wrong.
 
@@ -348,9 +402,9 @@ Body-proportion reality checks (use these to sanity-check the candidates):
 - Hip circumference is typically 40-68% of height.
 - Bust / chest circumference is typically 40-70% of height.
 - Bicep (around-arm) is typically 13-30% of height.
-- Wrist is typically 7-13% of height — much smaller than bicep.
+- Wrist is typically 7-13% of height, much smaller than bicep.
 - Neck is typically 16-28% of height.
-- bicep < waist, wrist < bicep, ankle < knee < thigh — ALWAYS.
+- bicep < waist, wrist < bicep, ankle < knee < thigh, ALWAYS.
 
 Respond with ONLY valid JSON (no prose, no markdown fences). For each flagged
 field, return either a corrected value (with reasoning) or "agree" if the CV
@@ -364,7 +418,7 @@ estimate looks right after all:
   }}
 }}
 
-Confidence is your own — 0.0 to 1.0. Only return corrections you'd stake on; we
+Confidence is your own, 0.0 to 1.0. Only return corrections you'd stake on; we
 will only apply corrections with confidence ≥ 0.6. If you genuinely cannot tell
 from the photo (occlusion, bad lighting, partial body), return "skip" instead
 of guessing.
@@ -381,8 +435,25 @@ class ClaudeValidator:
     retention controls can target it.
     """
 
-    def __init__(self, api_key: str | None = None) -> None:
-        self._api_key = api_key
+    def __init__(
+        self,
+        api_key: str | None = None,
+        llm: LLMProvider | None = None,
+        ensemble_size: int = 1,
+    ) -> None:
+        """:param api_key: Anthropic API key; used to build the default
+            direct-API provider when `llm` is not supplied (back-compat).
+        :param llm: explicit provider. When given, it drives every call and
+            its `is_enabled` replaces the old api-key gate, so a Claude Code
+            provider on a subscription counts as enabled with no API key.
+        :param ensemble_size: how many times `measure()` runs the model,
+            fusing the results by per-field median. 1 (default) = single call.
+            Values >1 reject single-run spikes on sampling models (Opus, which
+            cannot pin temperature) at K times the latency/cost. See
+            `_fuse_by_median`.
+        """
+        self._llm: LLMProvider = llm or AnthropicApiProvider(api_key)
+        self._ensemble_size = max(1, ensemble_size)
 
     def validate(
         self,
@@ -390,7 +461,7 @@ class ClaudeValidator:
         measurements: BodyMeasurements,
         subject_id: str | None = None,
     ) -> ValidationResult:
-        if not self._api_key or self._api_key == "test_key_placeholder":
+        if not self._llm.is_enabled:
             return self._default_result()
         if not subject_id:
             logger.info(
@@ -399,13 +470,12 @@ class ClaudeValidator:
             return self._default_result()
 
         try:
-            client = _anthropic_client(self._api_key)
             img_b64 = self._encode_image(image)
             measurements_str = json.dumps(measurements.to_dict(), indent=2)
-            response = client.messages.create(
+            raw = self._llm.complete(
                 model="claude-sonnet-4-6",
                 max_tokens=512,
-                # Sprint 36 — temperature=0 makes the same photo produce
+                # Sprint 36, temperature=0 makes the same photo produce
                 # the same verdict run-to-run. Default sampling
                 # (temperature≈1) was giving us waist 91 one call, 93
                 # the next, on identical inputs. Zero-temperature is
@@ -434,7 +504,6 @@ class ClaudeValidator:
                     }
                 ],
             )
-            raw = response.content[0].text
             parsed = self._parse_verdict_json(raw)
             return ValidationResult(
                 is_valid=parsed.get("is_valid", True),
@@ -460,29 +529,28 @@ class ClaudeValidator:
         subject_id: str | None = None,
         min_confidence: float = 0.5,
     ) -> float | None:
-        """Sprint 35 — estimate the person's height in cm from a single
+        """Sprint 35, estimate the person's height in cm from a single
         photo when no height was supplied and we don't want to lean on
         a stale stored value. Uses contextual scale cues (door frames,
-        furniture, body proportions, footwear) — see HEIGHT_ESTIMATE_PROMPT.
+        furniture, body proportions, footwear), see HEIGHT_ESTIMATE_PROMPT.
 
         Returns the estimated cm, or `None` when the consent gate fails,
         Claude isn't confident enough (< `min_confidence`), or anything
         errors. Callers MUST handle the `None` case by either falling
         back to the stored value or surfacing a validation error.
         """
-        if not self._api_key or self._api_key == "test_key_placeholder":
+        if not self._llm.is_enabled:
             return None
         if not subject_id:
             logger.info("claude height-estimate skipped: no subject_id consent token")
             return None
 
         try:
-            client = _anthropic_client(self._api_key)
             img_b64 = self._encode_image(image)
-            response = client.messages.create(
+            raw = self._llm.complete(
                 model="claude-sonnet-4-6",
                 max_tokens=512,
-                # Deterministic — same photo, same estimate. See measure()
+                # Deterministic, same photo, same estimate. See measure()
                 # for the same fix; height-estimate had the same variance.
                 temperature=0.0,
                 metadata={"user_id": subject_id},
@@ -503,7 +571,6 @@ class ClaudeValidator:
                     }
                 ],
             )
-            raw = response.content[0].text
             parsed = self._parse_verdict_json(raw)
             height = parsed.get("height_cm")
             confidence = parsed.get("confidence", 0.0)
@@ -516,7 +583,7 @@ class ClaudeValidator:
                 )
                 return None
             if height <= 0 or height < 50 or height > 250:
-                # Out-of-band — don't trust.
+                # Out-of-band, don't trust.
                 return None
             logger.info(
                 f"claude height-estimate: {height}cm conf={confidence} "
@@ -538,24 +605,95 @@ class ClaudeValidator:
         gender_profile: str = "ladies",
         subject_id: str | None = None,
     ) -> BodyMeasurements | None:
-        """Sprint 34 Phase C+ — Claude as a co-primary measurement source.
+        """Claude as a co-primary measurement source, with optional ensembling.
 
-        Sends both photos + the user's height to Claude with a rigorous
-        tape-measure technique system prompt. Returns a `BodyMeasurements`
-        Claude estimated directly from the photos, with per-field
-        confidence; the orchestrator then fuses this with the CV pipeline
-        (silhouette + SMPL) via the normal weighted-confidence fuser.
+        With `ensemble_size == 1` (default) this is a single model call. With
+        `ensemble_size > 1` it runs the scan that many times and fuses by
+        per-field MEDIAN. The median rejects single-run outliers, which is the
+        only reliable way to suppress run-to-run spikes on a sampling model
+        (Opus cannot pin `temperature=0`).
 
-        Returns `None` when the consent gate fails (no api_key, no
-        subject_id), the API call errors, or Claude returns unparseable
-        output — at which point the pipeline silently degrades to
-        CV-only and the operator sees a warning in the log.
+        The K runs execute CONCURRENTLY (each is an independent model call /
+        Claude Code subprocess with its own temp dir), so wall-clock is roughly
+        one call, not K; only the token/compute cost scales with K.
 
-        The technique prompt lives in `MEASUREMENT_TECHNIQUE_SYSTEM` and
-        is sent as the `system=` block with `cache_control` so Anthropic
-        caches it across calls (90% input-token saving, 5min TTL).
+        Returns `None` when the consent gate fails, every run errors, or every
+        run returns unparseable output; the pipeline then degrades to CV-only.
         """
-        if not self._api_key or self._api_key == "test_key_placeholder":
+        if self._ensemble_size <= 1:
+            return self._measure_once(
+                front_image, side_image, height_cm, gender_profile, subject_id
+            )
+
+        with ThreadPoolExecutor(max_workers=self._ensemble_size) as pool:
+            futures = [
+                pool.submit(
+                    self._measure_once,
+                    front_image,
+                    side_image,
+                    height_cm,
+                    gender_profile,
+                    subject_id,
+                )
+                for _ in range(self._ensemble_size)
+            ]
+            runs = [f.result() for f in futures]
+        runs = [r for r in runs if r is not None]
+
+        if not runs:
+            return None
+        if len(runs) == 1:
+            return runs[0]
+        logger.info(
+            f"claude measure ensemble: fusing {len(runs)}/{self._ensemble_size} "
+            f"runs by per-field median"
+        )
+        return self._fuse_by_median(runs, gender_profile)
+
+    @staticmethod
+    def _fuse_by_median(
+        runs: list[BodyMeasurements], gender_profile: str
+    ) -> BodyMeasurements:
+        """Fuse several measurement runs into one by taking the per-field
+        median value (and median confidence). The median of an odd K rejects a
+        single stray read outright; for even K it averages the two central
+        reads. Fields are included if any run produced them."""
+        from statistics import median
+
+        by_field: dict[str, list[SingleMeasurement]] = {}
+        for run in runs:
+            for name in run.__dataclass_fields__:
+                if name in ("gender_profile", "source"):
+                    continue
+                val = getattr(run, name)
+                if isinstance(val, SingleMeasurement):
+                    by_field.setdefault(name, []).append(val)
+
+        kwargs: dict[str, Any] = {"gender_profile": gender_profile, "source": "claude"}
+        for name, measurements in by_field.items():
+            values = sorted(s.value_cm for s in measurements)
+            confidences = sorted(s.confidence for s in measurements)
+            kwargs[name] = SingleMeasurement(
+                value_cm=round(median(values), 1),
+                confidence=round(median(confidences), 2),
+                source="claude",
+            )
+        return BodyMeasurements(**kwargs)
+
+    def _measure_once(
+        self,
+        front_image: np.ndarray,
+        side_image: np.ndarray | None,
+        height_cm: float,
+        gender_profile: str = "ladies",
+        subject_id: str | None = None,
+    ) -> BodyMeasurements | None:
+        """One measurement model call. See `measure()` for the ensembling
+        wrapper. The technique prompt lives in `MEASUREMENT_TECHNIQUE_SYSTEM`
+        and is sent as the `system=` block with `cache_control` so the direct
+        API caches it across calls (90% input-token saving, 5min TTL; the
+        Claude Code path does not cache)."""
+        if not self._llm.is_enabled:
             return None
         if not subject_id:
             logger.info("claude measure skipped: no subject_id consent token")
@@ -564,7 +702,6 @@ class ClaudeValidator:
             return None
 
         try:
-            client = _anthropic_client(self._api_key)
             front_b64 = self._encode_image(front_image)
 
             content: list[dict[str, Any]] = [
@@ -612,7 +749,7 @@ class ClaudeValidator:
                 }
             )
 
-            response = client.messages.create(
+            raw = self._llm.complete(
                 model="claude-sonnet-4-6",
                 # 22+ fields, each carrying a "note" string. 2048 was
                 # truncating responses mid-JSON; the corrector got
@@ -620,12 +757,12 @@ class ClaudeValidator:
                 # truth: this needs to fit the worst-case verbose-note
                 # response with structure overhead.
                 max_tokens=4096,
-                # Sprint 36 — deterministic decoding so the same photo
+                # Sprint 36, deterministic decoding so the same photo
                 # produces the same numbers run-to-run. The user
                 # observed waist 91 on one call and 93 on the next from
                 # the SAME image; default Claude temperature is ~1.0
                 # which is wrong for an extraction task. 0.0 is greedy
-                # decoding — pick the single most likely token at each
+                # decoding, pick the single most likely token at each
                 # step. We trade exploration for repeatability; that's
                 # the right trade-off here.
                 temperature=0.0,
@@ -640,7 +777,6 @@ class ClaudeValidator:
                 messages=[{"role": "user", "content": content}],
             )
 
-            raw = response.content[0].text
             parsed = self._parse_verdict_json(raw)
             return self._claude_measurements_to_body(
                 parsed, gender_profile=gender_profile
@@ -648,7 +784,7 @@ class ClaudeValidator:
         except json.JSONDecodeError:
             logger.warning("Claude measure returned non-JSON; skipping.")
             return None
-        except Exception as e:  # noqa: BLE001 — defence in depth
+        except Exception as e:  # noqa: BLE001, defence in depth
             logger.warning(f"Claude measure failed: {e}")
             return None
 
@@ -658,7 +794,7 @@ class ClaudeValidator:
     ) -> BodyMeasurements | None:
         """Map Claude's `{measurements_cm: {field: {value, confidence, note}}}`
         into a `BodyMeasurements` dataclass the fuser can consume. Field
-        names follow the technique prompt — match the dataclass attribute
+        names follow the technique prompt, match the dataclass attribute
         names via the `claude_to_body` map below. Unknown / null values
         become None on the BodyMeasurements (the fuser already handles
         per-field nullability).
@@ -668,7 +804,7 @@ class ClaudeValidator:
             return None
 
         # Claude field name → BodyMeasurements attribute. We accept either
-        # the short name ("waist") or the suffixed name ("waist_cm") —
+        # the short name ("waist") or the suffixed name ("waist_cm") ,
         # Claude has been seen producing both depending on prompt phrasing.
         claude_to_body: dict[str, str] = {
             "bust": "bust_cm",
@@ -744,9 +880,9 @@ class ClaudeValidator:
         subject_id: str | None = None,
         min_confidence: float = 0.6,
     ) -> dict[str, float]:
-        """Sprint 34 Phase C — ask Claude for per-field measurement corrections
+        """Sprint 34 Phase C, ask Claude for per-field measurement corrections
         on the fields the anthropometric validator flagged as out-of-band.
-        Returns a `{field_name: corrected_value_cm}` dict — only fields Claude
+        Returns a `{field_name: corrected_value_cm}` dict, only fields Claude
         is confident about (>= `min_confidence`). "agree" / "skip" responses
         don't appear in the return.
 
@@ -757,12 +893,12 @@ class ClaudeValidator:
 
         Cost: ~$0.005 per call at Claude Sonnet 4.6 vision pricing. Caller
         should only invoke this when the upstream pipeline already produced
-        a low-confidence or anthropometric-violation result — running it on
+        a low-confidence or anthropometric-violation result, running it on
         every scan unconditionally is wasteful.
         """
         if not flagged_fields:
             return {}
-        if not self._api_key or self._api_key == "test_key_placeholder":
+        if not self._llm.is_enabled:
             return {}
         if not subject_id:
             logger.info("claude correction skipped: no subject_id consent token")
@@ -784,17 +920,16 @@ class ClaudeValidator:
             return {}
 
         try:
-            client = _anthropic_client(self._api_key)
             img_b64 = self._encode_image(image)
-            response = client.messages.create(
+            raw = self._llm.complete(
                 model="claude-sonnet-4-6",
-                # Sprint 35 — bumped from 1024. The previous cap was being
+                # Sprint 35, bumped from 1024. The previous cap was being
                 # hit when 10+ fields were flagged because each field
                 # carries a reasoning string. Output was getting cut off
                 # mid-JSON, defeating the whole point. 4096 covers the
                 # worst case (14+ flagged fields × ~250 reasoning tokens).
                 max_tokens=4096,
-                # Deterministic — same flagged-field set should produce
+                # Deterministic, same flagged-field set should produce
                 # the same corrections each run.
                 temperature=0.0,
                 metadata={"user_id": subject_id},
@@ -822,13 +957,12 @@ class ClaudeValidator:
                     }
                 ],
             )
-            raw = response.content[0].text
             parsed = self._parse_verdict_json(raw)
             corrections_raw = parsed.get("corrections", {})
 
             accepted: dict[str, float] = {}
             for field, payload in corrections_raw.items():
-                # "agree" / "skip" — leave as-is.
+                # "agree" / "skip", leave as-is.
                 if not isinstance(payload, dict):
                     continue
                 value = payload.get("value_cm")
@@ -839,7 +973,7 @@ class ClaudeValidator:
                     continue
                 if confidence < min_confidence:
                     continue
-                # Final sanity bound — if Claude's correction is just as
+                # Final sanity bound, if Claude's correction is just as
                 # implausible as the original (very tall person, e.g.
                 # waist 200cm) reject it.
                 if value <= 0 or value > 300:
@@ -850,7 +984,7 @@ class ClaudeValidator:
         except json.JSONDecodeError:
             logger.warning("Claude correction returned non-JSON; skipping.")
             return {}
-        except Exception as e:  # noqa: BLE001 — defence in depth
+        except Exception as e:  # noqa: BLE001, defence in depth
             logger.warning(f"Claude correction failed: {e}")
             return {}
 
@@ -860,7 +994,7 @@ class ClaudeValidator:
         occluded: list[str],
         subject_id: str | None = None,
     ) -> LandmarkVerification:
-        """S5 — Claude vision verifies CV landmarks the MediaPipe pose
+        """S5, Claude vision verifies CV landmarks the MediaPipe pose
         detector flagged as low-visibility. Returns per-landmark
         verdicts with optional Claude-suggested coordinates.
 
@@ -870,7 +1004,7 @@ class ClaudeValidator:
         """
         if not occluded:
             return LandmarkVerification(verdicts={}, raw_response="")
-        if not self._api_key or self._api_key == "test_key_placeholder":
+        if not self._llm.is_enabled:
             return LandmarkVerification(verdicts={}, raw_response="")
         if not subject_id:
             logger.info(
@@ -879,12 +1013,11 @@ class ClaudeValidator:
             return LandmarkVerification(verdicts={}, raw_response="")
 
         try:
-            client = _anthropic_client(self._api_key)
             img_b64 = self._encode_image(image)
-            response = client.messages.create(
+            raw = self._llm.complete(
                 model="claude-sonnet-4-6",
                 max_tokens=1024,
-                # Deterministic landmark placement — same photo, same
+                # Deterministic landmark placement, same photo, same
                 # verdict. Especially important for occlusion calls
                 # where Claude has to guess at coords.
                 temperature=0.0,
@@ -911,7 +1044,6 @@ class ClaudeValidator:
                     }
                 ],
             )
-            raw = response.content[0].text
             parsed = json.loads(raw)
             verdicts: dict[str, LandmarkVerdict] = {}
             for name, payload in (parsed.get("verifications") or {}).items():
@@ -936,14 +1068,14 @@ class ClaudeValidator:
         except json.JSONDecodeError:
             logger.warning("Claude landmark verification returned non-JSON; skipping.")
             return LandmarkVerification(verdicts={}, raw_response="")
-        except Exception as e:  # noqa: BLE001 — defence in depth
+        except Exception as e:  # noqa: BLE001, defence in depth
             logger.warning(f"Claude landmark verification failed: {e}")
             return LandmarkVerification(verdicts={}, raw_response="")
 
     # Sprint 36 cost optimisation. Anthropic's vision tiles inputs at
     # 768×768, so a 4032×3024 phone photo just inflates per-call image
     # token count (~3-4×) without giving Claude any measurable benefit
-    # — the body proportions are perfectly legible at 1024px. Resizing
+    # , the body proportions are perfectly legible at 1024px. Resizing
     # + dropping JPEG quality 85→70 cuts the encoded payload roughly
     # in half and lands us at ~$0.05/scan instead of ~$0.10/scan, same
     # accuracy. The pose detector + scale calibrator already ran on
@@ -960,7 +1092,7 @@ class ClaudeValidator:
             new_w = int(round(w * scale))
             new_h = int(round(h * scale))
             # INTER_AREA is the recommended interpolation for downscaling
-            # — preserves detail better than bilinear at >2× shrink.
+            # , preserves detail better than bilinear at >2× shrink.
             image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
         rgb = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         _, buffer = cv2.imencode(
@@ -974,18 +1106,18 @@ class ClaudeValidator:
         Claude occasionally wraps JSON in markdown code fences or prefixes
         it with conversational preamble ("Here's my analysis:"), neither of
         which `json.loads` survives. Strip a fenced block if present, else
-        fall back to the widest `{…}` span the response contains. Raises
-        `json.JSONDecodeError` only when even that span fails to parse —
+        fall back to the widest `{...}` span the response contains. Raises
+        `json.JSONDecodeError` only when even that span fails to parse;
         the caller maps that to the "default to proceed" path.
 
-        Sprint 35 — additionally tolerate:
-          - multiple {…} blocks in one response (pick the largest)
+        Sprint 35, additionally tolerate:
+          - multiple {...} blocks in one response (pick the largest)
           - trailing commas (some Claude responses leak JS-style commas)
           - JSON inside ```text fences without the language hint
           - whole responses with `// comments` inline that need stripping
         """
         text = raw.strip()
-        # ```json …``` or ``` …``` fences — strip the first fenced block.
+        # ```json ...``` or ``` ...``` fences, strip the first fenced block.
         if text.startswith("```"):
             text = text.split("```", 2)[1]
             for lang in ("json\n", "json ", "json"):
@@ -996,21 +1128,21 @@ class ClaudeValidator:
             if text.endswith("```"):
                 text = text[:-3].strip()
 
-        # First pass — straight parse.
+        # First pass, straight parse.
         try:
             return json.loads(text)
         except json.JSONDecodeError:
             pass
 
         # Strip JS-style line comments + trailing commas (Claude rarely
-        # emits these but it does happen — guard the parser).
+        # emits these but it does happen, guard the parser).
         cleaned = self._strip_json_warts(text)
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
             pass
 
-        # Find ALL top-level {…} spans and try the largest one. Claude
+        # Find ALL top-level {...} spans and try the largest one. Claude
         # sometimes emits both a small `{"reasoning": "..."}` preamble and
         # the real result; we want the latter.
         spans = self._find_json_object_spans(cleaned)
@@ -1021,7 +1153,7 @@ class ClaudeValidator:
                 continue
 
         # No span parsed. Surface the raw response in the log so the
-        # operator can see exactly what Claude returned — silent failures
+        # operator can see exactly what Claude returned, silent failures
         # are the most expensive kind here.
         logger.warning(
             "Claude response was unparseable JSON. First 200 chars: " f"{raw[:200]!r}"
@@ -1032,22 +1164,22 @@ class ClaudeValidator:
     def _strip_json_warts(text: str) -> str:
         """Strip JS-style `// line comments` and trailing commas from a
         JSON-ish string. Cheap regex pass; not a real parser. Safe for the
-        narrow class of warts Claude emits in practice — anything more
+        narrow class of warts Claude emits in practice, anything more
         sophisticated should round-trip through `json5` instead.
         """
         import re
 
         # `// to end of line` (avoid matching inside strings via a simple
         # check that the // isn't preceded by an odd number of unescaped
-        # quotes on the line — close enough for Claude's output).
+        # quotes on the line, close enough for Claude's output).
         text = re.sub(r"//[^\n]*", "", text)
-        # `,}` or `,]` — trailing commas.
+        # `,}` or `,]`, trailing commas.
         text = re.sub(r",(\s*[}\]])", r"\1", text)
         return text
 
     @staticmethod
     def _find_json_object_spans(text: str) -> list[tuple[int, int]]:
-        """Find balanced `{…}` spans in `text`. Returns (start, end)
+        """Find balanced `{...}` spans in `text`. Returns (start, end)
         inclusive indices. Handles nested braces; ignores braces inside
         double-quoted strings (escaped quotes respected). O(n)."""
         spans: list[tuple[int, int]] = []

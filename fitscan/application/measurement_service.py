@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from fitscan.application.pipeline_orchestrator import PipelineOrchestrator
+from fitscan.config import get_settings
 from fitscan.cv_pipeline.pose_detector import PoseDetector
 from fitscan.cv_pipeline.preprocessor import ImagePreprocessor
 from fitscan.cv_pipeline.scale_calibrator import ScaleCalibrator
@@ -17,6 +18,7 @@ from fitscan.cv_pipeline.silhouette import SilhouetteMeasurer
 from fitscan.fusion.confidence import ConfidenceScorer
 from fitscan.fusion.fuser import MeasurementFuser
 from fitscan.infrastructure.image_loader import ImageLoader
+from fitscan.llm import create_llm_provider
 from fitscan.smpl.mesh_analyzer import MeshAnalyzer
 from fitscan.validation.claude_validator import ClaudeValidator
 from fitscan.validation.rule_validator import RuleValidator
@@ -54,12 +56,30 @@ def _resolve_anthropic_key() -> str:
     return os.getenv("ANTHROPIC_API_KEY", "")
 
 
+def _build_llm_provider() -> Any:
+    """Build the configured LLM provider from settings + the resolved key.
+
+    Provider selection (`FITSCAN_LLM_PROVIDER`) and Claude Code auth live in
+    `Settings`; the Anthropic key keeps its `.env`-precedence resolution so
+    a stray Claude Code session token in the shell can't shadow the
+    deploy-controlled key on the direct-API path.
+    """
+    settings = get_settings()
+    return create_llm_provider(
+        provider=settings.fitscan_llm_provider,
+        api_key=_resolve_anthropic_key(),
+        claude_code_auth=settings.fitscan_claude_code_auth,
+        claude_code_oauth_token=settings.fitscan_claude_code_oauth_token,
+        claude_code_model=settings.fitscan_claude_code_model,
+        claude_code_mcp_servers=settings.fitscan_claude_code_mcp_servers,
+    )
+
+
 def create_pipeline(
     enable_smpl: bool = False,
     enable_claude: bool = True,
 ) -> PipelineOrchestrator:
     """Factory function: creates the fully-wired pipeline."""
-    anthropic_key = _resolve_anthropic_key()
     # Lazy: keeps the [ml]-stack torch import out of base-install paths.
     from fitscan.smpl.body_fitter import SMPLBodyFitter
 
@@ -79,7 +99,10 @@ def create_pipeline(
         ),
         mesh_analyzer=MeshAnalyzer(),
         rule_validator=RuleValidator(),
-        claude_validator=ClaudeValidator(api_key=anthropic_key),
+        claude_validator=ClaudeValidator(
+            llm=_build_llm_provider(),
+            ensemble_size=get_settings().fitscan_measure_ensemble_size,
+        ),
         fuser=MeasurementFuser(),
         confidence_scorer=ConfidenceScorer(),
         enable_smpl=enable_smpl,
