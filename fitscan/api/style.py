@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from fitscan.application.measurement_service import _resolve_anthropic_key
+from fitscan.application.measurement_service import _build_llm_provider
 from fitscan.application.style_analyzer import StyleAnalyzer
 from fitscan.domain.style_models import StyleProfileRequest, StyleProfileResponse
 
@@ -18,21 +18,16 @@ router = APIRouter(prefix="/api/v1/style", tags=["style"])
 
 
 def _get_style_analyzer() -> StyleAnalyzer:
-    """Per-call StyleAnalyzer bound to the .env-resolved Anthropic key.
+    """Per-call StyleAnalyzer bound to the configured LLM provider.
 
-    The analyzer is cheap to construct (it lazily caches an Anthropic
-    client via lru_cache keyed on the API key), so we don't bother
-    memoising the analyzer itself.
-
-    Uses `_resolve_anthropic_key()` (same helper as measurement_service)
-    so `.env` takes precedence over `os.environ`. Without it, a stale
-    `ANTHROPIC_API_KEY=sk-ant-sid…` export in the shell (e.g. from
-    Claude Code) would shadow the real deploy key from .env and the
-    Public API returns 401 invalid-x-api-key — silently caught at
-    style_analyzer.py:134 and turned into a deterministic fallback.
+    The analyzer is cheap to construct, so we don't memoise it. Provider
+    selection (direct API vs Claude Code) and Anthropic-key resolution both
+    live in `_build_llm_provider()` (shared with the measurement pipeline),
+    so the style path honours `FITSCAN_LLM_PROVIDER` and the same `.env`
+    key-precedence rule that stops a stray Claude Code session token from
+    shadowing the deploy key.
     """
-    key = _resolve_anthropic_key()
-    return StyleAnalyzer(api_key=key or None)
+    return StyleAnalyzer(llm=_build_llm_provider())
 
 
 @router.post(

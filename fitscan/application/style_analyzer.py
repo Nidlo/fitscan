@@ -1,4 +1,4 @@
-"""StyleAnalyzer — Anthropic Claude wrapper for style profile classification.
+"""StyleAnalyzer, Anthropic Claude wrapper for style profile classification.
 
 Mirrors the pattern of `fitscan.validation.claude_validator`: same consent
 gate (no `subject_id` → no API call → fallback), same metadata forwarding
@@ -11,22 +11,12 @@ Public contract:
 from __future__ import annotations
 
 import json
-from functools import lru_cache
-from typing import Any
 
 from loguru import logger
 
 from fitscan.domain.style_models import StyleProfileRequest, StyleProfileResponse
-
-
-@lru_cache(maxsize=4)
-def _anthropic_client(api_key: str) -> Any:
-    """One Anthropic client per key, mirroring claude_validator. Constructing
-    a new client per call tears down the httpx connection pool every time."""
-    from anthropic import Anthropic
-
-    return Anthropic(api_key=api_key)
-
+from fitscan.llm.anthropic_api_provider import AnthropicApiProvider
+from fitscan.llm.provider import LLMProvider
 
 STYLE_PROMPT = """\
 You are a fashion stylist for a Ghana / West-Africa marketplace called Nidlo.
@@ -88,24 +78,33 @@ _SUMMARY_HARD_CAP = 1500
 class StyleAnalyzer:
     """Calls Claude (Sonnet 4.6) to produce a StyleProfileResponse.
 
-    The body photo is NOT sent for v1 — measurements + interests carry
+    The body photo is NOT sent for v1, measurements + interests carry
     enough signal for an initial style profile. Photo-aware refinement is
     a Phase 2 follow-up that would also require explicit consent under
     the existing AnthropicConsentDialog.
     """
 
-    def __init__(self, api_key: str | None = None) -> None:
-        self._api_key = api_key
+    def __init__(
+        self,
+        api_key: str | None = None,
+        llm: LLMProvider | None = None,
+    ) -> None:
+        """:param api_key: Anthropic API key; builds the default direct-API
+            provider when `llm` is not supplied (back-compat).
+        :param llm: explicit provider. When given it drives the call and its
+            `is_enabled` replaces the old api-key gate.
+        """
+        self._llm: LLMProvider = llm or AnthropicApiProvider(api_key)
 
     def analyze(self, request: StyleProfileRequest) -> StyleProfileResponse:
         # Consent + config gate. Without a subject_id we don't ship to
-        # Anthropic. Without an API key we can't call at all. Both fall
-        # back to a deterministic stub so the caller never crashes.
-        if not self._api_key or self._api_key == "test_key_placeholder":
-            logger.info("style: anthropic api key absent — returning fallback")
+        # Anthropic. Without an enabled provider we can't call at all. Both
+        # fall back to a deterministic stub so the caller never crashes.
+        if not self._llm.is_enabled:
+            logger.info("style: llm provider not enabled, returning fallback")
             return self._fallback(request)
         if not request.subject_id:
-            logger.info("style: no subject_id consent token — returning fallback")
+            logger.info("style: no subject_id consent token, returning fallback")
             return self._fallback(request)
 
         # Spell out the unit name so the prompt reads naturally
@@ -114,8 +113,7 @@ class StyleAnalyzer:
         unit_name = "inch" if request.display_unit == "inches" else "centimetre"
 
         try:
-            client = _anthropic_client(self._api_key)
-            response = client.messages.create(
+            raw = self._llm.complete(
                 model="claude-sonnet-4-6",
                 max_tokens=600,
                 metadata={"user_id": request.subject_id},
@@ -134,7 +132,6 @@ class StyleAnalyzer:
                     }
                 ],
             )
-            raw = response.content[0].text
             parsed = json.loads(raw)
             summary = str(parsed["summary"])
             if len(summary) > _SUMMARY_HARD_CAP:
@@ -162,10 +159,10 @@ class StyleAnalyzer:
                 from_fallback=False,
             )
         except json.JSONDecodeError:
-            logger.warning("style: claude returned non-JSON — fallback")
+            logger.warning("style: claude returned non-JSON, fallback")
             return self._fallback(request)
-        except Exception as e:  # noqa: BLE001 — defensive: never propagate
-            logger.warning(f"style: claude call failed — fallback: {e}")
+        except Exception as e:  # noqa: BLE001, defensive: never propagate
+            logger.warning(f"style: claude call failed, fallback: {e}")
             return self._fallback(request)
 
     def _fallback(self, request: StyleProfileRequest) -> StyleProfileResponse:
