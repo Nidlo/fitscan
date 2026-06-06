@@ -255,8 +255,12 @@ jobs:
             venv/bin/pip install --upgrade pip setuptools wheel --quiet
             venv/bin/pip install 'numpy>=1.26,<2' --quiet
             venv/bin/pip install --no-build-isolation 'chumpy>=0.70' --quiet
-            # Production needs the full ML stack; see pyproject.toml [ml].
-            venv/bin/pip install -e '.[ml]' --quiet
+            # Production needs the full ML stack ([ml]) plus the Claude Code
+            # provider ([claude-code], which bundles the claude-agent-sdk +
+            # its native binary). Without claude-code the worker throws
+            # "No module named 'claude_agent_sdk'" and silently falls back to
+            # CV-only measurement. See pyproject.toml + docs/claude_code.md.
+            venv/bin/pip install -e '.[ml,claude-code]' --quiet
             venv/bin/alembic upgrade head
             # All three units: API + Celery worker + Celery beat.
             # Beat reload is needed whenever the schedule changes; safest
