@@ -12,6 +12,7 @@ touching code.
 from __future__ import annotations
 
 import os
+import urllib.request
 
 from celery import Celery
 from celery.schedules import crontab
@@ -24,7 +25,7 @@ app = Celery(
 )
 
 app.conf.update(
-    # Reliability defaults — covers the audit FS-H3 retry-policy gap for
+    # Reliability defaults - covers the audit FS-H3 retry-policy gap for
     # any future tasks that don't override.
     task_acks_late=True,
     task_reject_on_worker_lost=True,
@@ -40,7 +41,7 @@ def cleanup_old_avatars(self, days: int = 30) -> int:
     retention policy from audit FS-C3. Idempotent: re-running deletes only
     rows still past the cutoff.
     """
-    # Local import to keep this module loadable without the full ML stack —
+    # Local import to keep this module loadable without the full ML stack -
     # `celery -A fitscan.tasks` shouldn't have to import torch.
     from fitscan.infrastructure.result_store import AvatarStore
 
@@ -55,7 +56,7 @@ def reset_api_key_quotas(self) -> int:
 
     The auth dependency (audit FS-C1) increments `usage_this_month` and
     rejects callers past `monthly_limit`, but without this monthly reset
-    every key would silently lock once it crossed its quota — even on
+    every key would silently lock once it crossed its quota - even on
     the 1st of the next month. Audit FS-C5.
     """
     from sqlalchemy.orm import Session
@@ -73,6 +74,21 @@ def reset_api_key_quotas(self) -> int:
     return updated
 
 
+@app.task(bind=True, name="fitscan.tasks.beat_heartbeat", ignore_result=True)
+def beat_heartbeat(self) -> None:
+    """Ping Healthchecks.io to confirm Celery beat is alive.
+
+    Skips silently when HEALTHCHECKS_BEAT_URL is not set (local/CI).
+    """
+    url = os.getenv("HEALTHCHECKS_BEAT_URL", "")
+    if not url:
+        return
+    try:
+        urllib.request.urlopen(url, timeout=5)  # noqa: S310
+    except Exception:
+        pass
+
+
 # Daily 04:00 UTC retention sweep + 1st-of-month 00:05 UTC quota reset.
 # Beat must be running for these to fire:
 #   celery -A fitscan.tasks beat --loglevel=info
@@ -85,5 +101,9 @@ app.conf.beat_schedule = {
     "reset-api-key-quotas-monthly": {
         "task": "fitscan.tasks.reset_api_key_quotas",
         "schedule": crontab(day_of_month=1, hour=0, minute=5),
+    },
+    "beat-heartbeat": {
+        "task": "fitscan.tasks.beat_heartbeat",
+        "schedule": crontab(minute="*/5"),
     },
 }

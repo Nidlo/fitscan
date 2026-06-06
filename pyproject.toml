@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 # unit tests need at module-import time. The heavy ML stack lives in
 # the [ml] optional extra so `pip install -e ".[dev]"` (unit tests, CI
 # lint) skips the 2GB torch/mediapipe/rembg wheels entirely. Production
-# servers install `[ml]` too — see install.sh + deploy paths.
+# servers install `[ml]` too, see install.sh + deploy paths.
 #
 # Rule of thumb for what belongs HERE vs in [ml]:
 #   - Module-level imports in any fitscan/*.py that unit tests reach: base
@@ -24,7 +24,7 @@ dependencies = [
     "numpy>=1.26.0,<2",
     # opencv 4.11+ pins numpy>=2; cap until mediapipe Tasks-API lands.
     # Module-level in preprocessor / scale_calibrator / image_loader /
-    # claude_validator / api.routes — so it's a base dep.
+    # claude_validator / api.routes, so it's a base dep.
     "opencv-python>=4.8.0,<4.11",
     # PIL: module-level in preprocessor.
     "pillow>=10.0.0",
@@ -41,7 +41,7 @@ dependencies = [
     "pgvector>=0.2.0",
     "celery>=5.3.0",
     "redis>=5.0.0",
-    # Anthropic Claude — module-level import in claude_validator
+    # Anthropic Claude, module-level import in claude_validator
     "anthropic>=0.25.0",
     "httpx>=0.25.0",
     # CLI + ops
@@ -61,21 +61,21 @@ dependencies = [
 #     any unit test). fitscan/__init__.py wraps its torch import in
 #     try/except so package init works without torch installed.
 #   - mediapipe / rembg / onnxruntime are imported INSIDE function
-#     bodies in pose_detector.py and preprocessor.py — module load
+#     bodies in pose_detector.py and preprocessor.py, module load
 #     does not pull them in.
 #   - scipy / scikit-image / shapely have no module-level imports
-#     anywhere in fitscan/ — purely function-level use.
+#     anywhere in fitscan/, purely function-level use.
 #   - smplx / chumpy / pyrender / trimesh / xatlas / pygltflib /
 #     networkx / gdown live in smpl/ and avatar/ paths only.
 ml = [
     "torch>=2.1.0",
     "torchvision>=0.16.0",
-    # Pin below 0.10.21 — that release dropped the `mediapipe.solutions`
+    # Pin below 0.10.21, that release dropped the `mediapipe.solutions`
     # namespace in favour of the new Tasks API. cv_pipeline/pose_detector.py
     # still consumes `mp.solutions.pose`; migration is a separate sprint.
     "mediapipe>=0.10.9,<0.10.21",
     # rembg 2.0.60+ pins numpy>=2.3 (incompatible with our numpy<2 base).
-    # The `[cpu]` extra pulls in onnxruntime — without it `new_session()`
+    # The `[cpu]` extra pulls in onnxruntime, without it `new_session()`
     # exits and the preprocessor falls back to a threshold mask that
     # poisons every silhouette.
     "rembg[cpu]>=2.0.50,<2.0.60",
@@ -98,7 +98,7 @@ ml = [
     # at deploy time via:
     #   pip install --no-deps --no-build-isolation \
     #     'git+https://github.com/shubham-goel/4D-Humans.git'
-    # Checkpoint download (~2.5GB) is a separate manual step — see
+    # Checkpoint download (~2.5GB) is a separate manual step, see
     # docs/server-setup.md §2.2.
     "pytorch-lightning>=2.0",
     "hydra-core>=1.3",
@@ -113,7 +113,7 @@ ml = [
     "pygltflib>=1.16.0",
     "networkx>=3.2",
     "gdown>=4.7.0",
-    # Object-store SDKs — only loaded function-level in object_store.py
+    # Object-store SDKs, only loaded function-level in object_store.py
     "boto3>=1.28.0",
     "minio>=7.2.0",
 ]
@@ -128,6 +128,16 @@ dev = [
     "freezegun>=1.5.0",
 ]
 
+# ─── Claude Code provider ─────────────────────────────────────────
+# Only needed when FITSCAN_LLM_PROVIDER=claude_code. The `claude-agent-sdk`
+# import is function-level (in fitscan/llm/claude_code_provider.py), so unit
+# tests never load it and it stays out of the base install. Also requires the
+# `claude` CLI on PATH (installed separately) and an auth credential (see
+# docs/claude_code.md).
+claude-code = [
+    "claude-agent-sdk>=0.1.0",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
@@ -140,24 +150,24 @@ addopts = "--cov=fitscan --cov-report=term-missing --cov-fail-under=65"
 
 [tool.coverage.run]
 omit = [
-    # Requires SMPL-X / HMR2 model weights — not available in CI
+    # Requires SMPL-X / HMR2 model weights, not available in CI
     "fitscan/smpl/*",
     "fitscan/avatar/*",
-    # Celery tasks — integration-only, tested via the service layer
+    # Celery tasks, integration-only, tested via the service layer
     "fitscan/tasks.py",
-    # FastAPI application wiring — covered by integration tests, not unit tests
+    # FastAPI application wiring, covered by integration tests, not unit tests
     "fitscan/api/main.py",
     "fitscan/api/dependencies.py",
     "fitscan/api/routes.py",
     "fitscan/api/admin_routes.py",
     "fitscan/api/style.py",
-    # S3/Backblaze object store — integration-only
+    # S3/Backblaze object store, integration-only
     "fitscan/infrastructure/result_store.py",
-    # Resend HTTP client — talks to the third-party API; integration-only.
+    # Resend HTTP client, talks to the third-party API; integration-only.
     "fitscan/infrastructure/resend_client.py",
-    # CLI entry-point wrappers — trivial subcommand dispatch
+    # CLI entry-point wrappers, trivial subcommand dispatch
     "fitscan/cli/__main__.py",
-    # Protocols / ABCs — by-design uncoverable
+    # Protocols / ABCs, by-design uncoverable
     "fitscan/domain/interfaces.py",
 ]
 

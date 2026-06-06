@@ -48,7 +48,7 @@ class TestStyleAnalyzerFallback:
 
 
 class TestStyleAnalyzerHappyPath:
-    @patch("fitscan.application.style_analyzer._anthropic_client")
+    @patch("fitscan.llm.anthropic_api_provider._anthropic_client")
     def test_parses_claude_json_response(self, mock_client_factory) -> None:
         # Stub Claude's response shape
         fake_response = MagicMock()
@@ -95,7 +95,7 @@ class TestStyleAnalyzerHappyPath:
         call_args = fake_client.messages.create.call_args
         assert call_args.kwargs["metadata"]["user_id"] == "user-abc"
 
-    @patch("fitscan.application.style_analyzer._anthropic_client")
+    @patch("fitscan.llm.anthropic_api_provider._anthropic_client")
     def test_invalid_json_falls_back(self, mock_client_factory) -> None:
         fake_response = MagicMock()
         fake_response.content = [MagicMock(text="not valid json")]
@@ -108,7 +108,7 @@ class TestStyleAnalyzerHappyPath:
 
         assert result.from_fallback is True
 
-    @patch("fitscan.application.style_analyzer._anthropic_client")
+    @patch("fitscan.llm.anthropic_api_provider._anthropic_client")
     def test_anthropic_exception_falls_back(self, mock_client_factory) -> None:
         fake_client = MagicMock()
         fake_client.messages.create.side_effect = RuntimeError("api down")
