@@ -228,51 +228,6 @@ jobs:
       # the integration suite alone covers ~49% which trips fail-under=75.
       - run: pytest tests/integration/ -v --tb=short --no-cov
 
-  deploy:
-    name: Deploy FitScan to server
-    runs-on: ubuntu-22.04
-    needs: [unit-tests, integration-tests]
-    if: github.ref == 'refs/heads/production' && github.event_name == 'push'
 
-    steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            set -e
-            cd /home/fitscan/app
-
-            git fetch origin production
-            git reset --hard origin/production
-
-            # Defensive chumpy guard: pip's resolver normally finds the
-            # existing chumpy and skips the rebuild, but any transitive bump
-            # would trigger a fresh install that fails on `import pip`
-            # under PEP 517 isolation. Same fix as install.sh + unit-tests.
-            venv/bin/pip install --upgrade pip setuptools wheel --quiet
-            venv/bin/pip install 'numpy>=1.26,<2' --quiet
-            venv/bin/pip install --no-build-isolation 'chumpy>=0.70' --quiet
-            # Production needs the full ML stack; see pyproject.toml [ml].
-            venv/bin/pip install -e '.[ml]' --quiet
-            venv/bin/alembic upgrade head
-            # All three units: API + Celery worker + Celery beat.
-            # Beat reload is needed whenever the schedule changes; safest
-            # to restart unconditionally on every deploy.
-            sudo systemctl restart fitscan fitscan-worker fitscan-beat
-
-            # fitscan loads PyTorch + MediaPipe on boot; cold start takes
-            # 20-30s. Poll the healthcheck every 2s for up to 60s before
-            # giving up. A flat sleep+single-curl was too short.
-            for i in $(seq 1 30); do
-              if curl -sf http://localhost:8000/api/v1/health >/dev/null; then
-                echo "FitScan deployed successfully (healthy after $((i*2))s)."
-                exit 0
-              fi
-              sleep 2
-            done
-            echo "FitScan failed to come up within 60s. Recent journal:"
-            systemctl status fitscan --no-pager | head -20 || true
-            exit 1
+  # Deployment is handled by Coolify's GitHub webhook (push to production -> automatic deploy).
+  # The old SSH-based deploy job was removed on 2026-11-19 when FitScan moved into Coolify.
